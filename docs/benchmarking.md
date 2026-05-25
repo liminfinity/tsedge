@@ -69,6 +69,29 @@ Each benchmark can also write a machine-readable CSV result file:
 ./sqlite_bench 1000000 results_sqlite.csv
 ```
 
+From the repository root, the helper script writes the expected notebook input
+files into `benchmark_results/`:
+
+```bash
+sh scripts/run_benchmarks.sh 1000000
+```
+
+## Notebook Environment
+
+The benchmark analysis notebook uses Python packages listed in
+`requirements.txt`:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+jupyter notebook notebooks/benchmark_analysis.ipynb
+```
+
+The `.venv/` directory and generated `benchmark_results/` files are ignored by
+Git.
+
 ## Using Results
 
 Benchmark output is line-oriented and easy to copy into a diploma document:

@@ -39,6 +39,18 @@ benchmark_results/
 *.sqlite
 *.sqlite3
 
+# Python virtual environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Jupyter caches
+*.ipynb_checkpoints/
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
 # Editor and OS files
 .DS_Store
 Thumbs.db
