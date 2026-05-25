@@ -13,8 +13,8 @@ The benchmark chapter may compare:
 - CSV files.
 - SQLite, if it is available and a separate comparison benchmark is added.
 
-The current `tsedge_bench` program measures TSEdge directly and reports raw
-binary size for compression-ratio comparison.
+`tsedge_bench` measures TSEdge directly. `file_bench` measures raw binary and
+CSV files. `sqlite_bench` is built only when SQLite3 is available.
 
 ## Datasets
 
@@ -55,9 +55,19 @@ Run the benchmark:
 
 ```bash
 ./tsedge_bench 1000000
+./file_bench 1000000
+./sqlite_bench 1000000
 ```
 
 Use a smaller value, such as `1000`, for a quick smoke test.
+
+Each benchmark can also write a machine-readable CSV result file:
+
+```bash
+./tsedge_bench 1000000 results_tsedge.csv
+./file_bench 1000000 results_file.csv
+./sqlite_bench 1000000 results_sqlite.csv
+```
 
 ## Using Results
 

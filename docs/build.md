@@ -46,10 +46,11 @@ The optional argument is the number of generated points per dataset.
 
 ## Install
 
-The current CMake project does not define install rules yet, so
-`cmake --install` is not available as a supported workflow. If install rules are
-added later, the expected command will be:
+After building, install the library and public header with:
 
 ```bash
 cmake --install .
 ```
+
+This installs the shared library, the static library, and `include/tsedge.h`
+using the platform's standard CMake install directories.

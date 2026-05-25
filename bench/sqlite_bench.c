@@ -1,32 +1,21 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include "tsedge.h"
-
-#include <dirent.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sqlite3.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
 typedef enum {
-    /* Smooth data should benefit from timestamp deltas and repeated patterns. */
     DATASET_SMOOTH,
-
-    /* Noisy values are intentionally harder for value compression. */
     DATASET_NOISY,
-
-    /* Step data checks behavior when values repeat for long runs. */
     DATASET_STEP
 } dataset_type;
-
-typedef struct {
-    size_t count;
-} read_counter;
 
 typedef struct {
     const char* system;
@@ -39,43 +28,10 @@ typedef struct {
     uint64_t raw_size_bytes;
 } bench_result;
 
-static int count_cb(const tsedge_point* point, void* user_data) {
-    (void)point;
-    read_counter* counter = (read_counter*)user_data;
-    ++counter->count;
-    return 0;
-}
-
 static double now_seconds(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
-}
-
-static void rm_rf(const char* path) {
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
-    (void)system(cmd);
-}
-
-static uint64_t dir_size(const char* path) {
-    DIR* dir = opendir(path);
-    if (!dir) {
-        struct stat st;
-        return stat(path, &st) == 0 ? (uint64_t)st.st_size : 0;
-    }
-    uint64_t total = 0;
-    struct dirent* entry = NULL;
-    while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-        char child[1024];
-        snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
-        total += dir_size(child);
-    }
-    closedir(dir);
-    return total;
 }
 
 static double sample_value(dataset_type type, size_t i) {
@@ -102,6 +58,22 @@ static const char* dataset_name(dataset_type type) {
         default:
             return "unknown";
     }
+}
+
+static uint64_t file_size(const char* path) {
+    struct stat st;
+    return stat(path, &st) == 0 ? (uint64_t)st.st_size : 0;
+}
+
+static int exec_sql(sqlite3* db, const char* sql) {
+    char* err = NULL;
+    int rc = sqlite3_exec(db, sql, NULL, NULL, &err);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "sqlite error: %s\n", err ? err : sqlite3_errmsg(db));
+        sqlite3_free(err);
+        return 1;
+    }
+    return 0;
 }
 
 static int write_csv_header(FILE* csv) {
@@ -153,91 +125,131 @@ static int write_csv_result(FILE* csv, const bench_result* result) {
     ) < 0 ? 1 : 0;
 }
 
-static int run_dataset(dataset_type type, size_t points, FILE* csv) {
-    /*
-     * The benchmark reports write/read throughput, aggregate timing and storage
-     * size. Results depend on the device, compiler, filesystem and storage.
-     */
-    char path[256];
-    snprintf(path, sizeof(path), "/tmp/tsedge_bench_%s_%ld", dataset_name(type), (long)getpid());
-    rm_rf(path);
-
-    tsedge_db* db = NULL;
-    int rc = tsedge_open(path, &db);
-    if (rc != TSEDGE_OK) {
-        fprintf(stderr, "open: %s\n", tsedge_strerror(rc));
+static int load_data(sqlite3* db, dataset_type type, size_t points) {
+    if (exec_sql(db, "BEGIN TRANSACTION;") != 0) {
         return 1;
     }
-    rc = tsedge_create_series(db, "bench.value");
-    if (rc != TSEDGE_OK) {
-        fprintf(stderr, "create_series: %s\n", tsedge_strerror(rc));
+
+    sqlite3_stmt* stmt = NULL;
+    if (sqlite3_prepare_v2(db, "INSERT INTO points(timestamp, value) VALUES (?, ?);", -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "sqlite prepare insert: %s\n", sqlite3_errmsg(db));
         return 1;
     }
 
     srand(1);
-    double start = now_seconds();
     for (size_t i = 0; i < points; ++i) {
-        rc = tsedge_append(db, "bench.value", 1710000000000LL + (int64_t)i * 1000, sample_value(type, i));
-        if (rc != TSEDGE_OK) {
-            fprintf(stderr, "append: %s\n", tsedge_strerror(rc));
+        sqlite3_bind_int64(stmt, 1, 1710000000000LL + (sqlite3_int64)i * 1000);
+        sqlite3_bind_double(stmt, 2, sample_value(type, i));
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            fprintf(stderr, "sqlite insert: %s\n", sqlite3_errmsg(db));
+            sqlite3_finalize(stmt);
             return 1;
         }
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
     }
-    rc = tsedge_close(db);
-    if (rc != TSEDGE_OK) {
-        fprintf(stderr, "close: %s\n", tsedge_strerror(rc));
+
+    sqlite3_finalize(stmt);
+    return exec_sql(db, "COMMIT;");
+}
+
+static int read_count(sqlite3* db, size_t* out_count) {
+    sqlite3_stmt* stmt = NULL;
+    const char* sql = "SELECT timestamp, value FROM points WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp;";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "sqlite prepare read: %s\n", sqlite3_errmsg(db));
+        return 1;
+    }
+    sqlite3_bind_int64(stmt, 1, 1710000000000LL);
+    sqlite3_bind_int64(stmt, 2, 1710000000000LL + 9223372036854LL);
+
+    size_t count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        ++count;
+    }
+    sqlite3_finalize(stmt);
+    *out_count = count;
+    return 0;
+}
+
+static int read_avg(sqlite3* db, double* out_avg) {
+    sqlite3_stmt* stmt = NULL;
+    const char* sql = "SELECT AVG(value) FROM points WHERE timestamp BETWEEN ? AND ?;";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "sqlite prepare avg: %s\n", sqlite3_errmsg(db));
+        return 1;
+    }
+    sqlite3_bind_int64(stmt, 1, 1710000000000LL);
+    sqlite3_bind_int64(stmt, 2, 1710000000000LL + 9223372036854LL);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        *out_avg = sqlite3_column_double(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+static int run_dataset(dataset_type type, size_t points, FILE* csv) {
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/sqlite_bench_%s_%ld.sqlite3", dataset_name(type), (long)getpid());
+    remove(path);
+
+    sqlite3* db = NULL;
+    if (sqlite3_open(path, &db) != SQLITE_OK) {
+        fprintf(stderr, "sqlite open: %s\n", db ? sqlite3_errmsg(db) : "no handle");
+        sqlite3_close(db);
+        return 1;
+    }
+
+    if (exec_sql(db, "CREATE TABLE points(timestamp INTEGER NOT NULL, value REAL NOT NULL);") != 0 ||
+        exec_sql(db, "CREATE INDEX idx_points_timestamp ON points(timestamp);") != 0) {
+        sqlite3_close(db);
+        remove(path);
+        return 1;
+    }
+
+    double start = now_seconds();
+    if (load_data(db, type, points) != 0) {
+        sqlite3_close(db);
+        remove(path);
         return 1;
     }
     double write_seconds = now_seconds() - start;
 
-    db = NULL;
-    rc = tsedge_open(path, &db);
-    if (rc != TSEDGE_OK) {
-        fprintf(stderr, "reopen: %s\n", tsedge_strerror(rc));
+    size_t count = 0;
+    start = now_seconds();
+    if (read_count(db, &count) != 0) {
+        sqlite3_close(db);
+        remove(path);
         return 1;
     }
-
-    read_counter counter;
-    counter.count = 0;
-    start = now_seconds();
-    rc = tsedge_read_range(db, "bench.value", 1710000000000LL, 1710000000000LL + (int64_t)points * 1000, count_cb, &counter);
     double read_seconds = now_seconds() - start;
-    if (rc != TSEDGE_OK) {
-        fprintf(stderr, "read: %s\n", tsedge_strerror(rc));
-        return 1;
-    }
 
-    double aggregate = 0.0;
+    double avg = 0.0;
     start = now_seconds();
-    rc = tsedge_aggregate(db, "bench.value", 1710000000000LL, 1710000000000LL + (int64_t)points * 1000, TSEDGE_AGG_AVG, &aggregate);
+    if (read_avg(db, &avg) != 0) {
+        sqlite3_close(db);
+        remove(path);
+        return 1;
+    }
     double avg_seconds = now_seconds() - start;
-    if (rc != TSEDGE_OK) {
-        fprintf(stderr, "aggregate: %s\n", tsedge_strerror(rc));
-        return 1;
-    }
-    rc = tsedge_close(db);
-    if (rc != TSEDGE_OK) {
-        fprintf(stderr, "close2: %s\n", tsedge_strerror(rc));
-        return 1;
-    }
+    (void)avg;
 
-    (void)aggregate;
+    sqlite3_close(db);
+
     bench_result result;
-    result.system = "tsedge";
+    result.system = "sqlite";
     result.dataset = dataset_name(type);
-    result.points = counter.count;
+    result.points = count;
     result.write_seconds = write_seconds;
     result.read_seconds = read_seconds;
     result.avg_seconds = avg_seconds;
-    result.size_bytes = dir_size(path);
+    result.size_bytes = file_size(path);
     result.raw_size_bytes = (uint64_t)points * 16u;
     print_result(&result);
-    if (write_csv_result(csv, &result) != 0) {
-        rm_rf(path);
-        return 1;
-    }
-    rm_rf(path);
-    return 0;
+    int rc = write_csv_result(csv, &result);
+    remove(path);
+    return rc;
 }
 
 int main(int argc, char** argv) {
@@ -245,6 +257,7 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         points = (size_t)strtoull(argv[1], NULL, 10);
     }
+
     FILE* csv = NULL;
     if (argc > 2) {
         csv = fopen(argv[2], "w");
@@ -257,24 +270,17 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    if (run_dataset(DATASET_SMOOTH, points, csv) != 0) {
-        if (csv) {
-            fclose(csv);
+
+    dataset_type datasets[] = {DATASET_SMOOTH, DATASET_NOISY, DATASET_STEP};
+    for (size_t i = 0; i < sizeof(datasets) / sizeof(datasets[0]); ++i) {
+        if (run_dataset(datasets[i], points, csv) != 0) {
+            if (csv) {
+                fclose(csv);
+            }
+            return 1;
         }
-        return 1;
     }
-    if (run_dataset(DATASET_NOISY, points, csv) != 0) {
-        if (csv) {
-            fclose(csv);
-        }
-        return 1;
-    }
-    if (run_dataset(DATASET_STEP, points, csv) != 0) {
-        if (csv) {
-            fclose(csv);
-        }
-        return 1;
-    }
+
     if (csv && fclose(csv) != 0) {
         return 1;
     }

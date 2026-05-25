@@ -5,6 +5,8 @@ project(tsedge
     LANGUAGES C
 )
 
+include(GNUInstallDirs)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -51,7 +53,16 @@ set(TSEDGE_BENCH_SOURCES
     bench/tsedge_bench.c
 )
 
+set(TSEDGE_FILE_BENCH_SOURCES
+    bench/file_bench.c
+)
+
+set(TSEDGE_SQLITE_BENCH_SOURCES
+    bench/sqlite_bench.c
+)
+
 find_library(TSEDGE_MATH_LIBRARY m)
+find_package(SQLite3 QUIET)
 
 function(tsedge_link_math target_name)
     if(TSEDGE_MATH_LIBRARY)
@@ -108,6 +119,15 @@ add_executable(tsedge_bench ${TSEDGE_BENCH_SOURCES})
 target_link_libraries(tsedge_bench PRIVATE tsedge)
 tsedge_link_math(tsedge_bench)
 
+add_executable(file_bench ${TSEDGE_FILE_BENCH_SOURCES})
+tsedge_link_math(file_bench)
+
+if(SQLite3_FOUND)
+    add_executable(sqlite_bench ${TSEDGE_SQLITE_BENCH_SOURCES})
+    target_link_libraries(sqlite_bench PRIVATE SQLite3::SQLite3)
+    tsedge_link_math(sqlite_bench)
+endif()
+
 enable_testing()
 
 add_executable(tsedge_tests ${TSEDGE_TEST_SOURCES})
@@ -116,3 +136,13 @@ target_include_directories(tsedge_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 tsedge_link_math(tsedge_tests)
 
 add_test(NAME tsedge_tests COMMAND $<TARGET_FILE:tsedge_tests>)
+
+install(TARGETS tsedge tsedge_static
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/tsedge.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
