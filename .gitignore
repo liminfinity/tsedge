@@ -1,0 +1,56 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# CMake files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+
+# Binaries and libraries
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+
+# Generated databases and benchmark outputs
+demo_db/
+bench_db/
+test_db/
+*_db/
+*.tse
+*.raw
+*.log
+*.csv
+results/
+benchmark_results/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage and debug files
+*.gcda
+*.gcno
+*.gcov
+coverage/
+core
+core.*
