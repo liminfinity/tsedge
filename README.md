@@ -25,6 +25,33 @@ The build produces:
 - `tsedge_bench`
 - `tsedge_tests`
 
+## Release Archive
+
+TSEdge can be packaged as a `.tar.gz` archive for GitHub Releases:
+
+```bash
+mkdir build
+cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+cmake --build .
+ctest --output-on-failure
+cpack
+```
+
+The archive is written into the build directory and contains `include/`, `lib/`,
+`bin/`, `docs/`, `README.md`, `INSTALL.md`, and `LICENSE`.
+
+Example use after unpacking:
+
+```bash
+tar -xzf tsedge-0.1.0-*.tar.gz
+cc app.c -Itsedge-0.1.0-*/include -Ltsedge-0.1.0-*/lib -ltsedge -o app
+LD_LIBRARY_PATH=tsedge-0.1.0-*/lib ./app
+```
+
+On macOS, use `DYLD_LIBRARY_PATH` for the dynamic library path. More release
+details are in [docs/release.md](docs/release.md).
+
 ## API
 
 The public API lives in `include/tsedge.h` and exposes an opaque `tsedge_db`.

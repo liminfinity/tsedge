@@ -1,0 +1,38 @@
+name: Build release archive
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release-archive:
+    name: Release archive
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install optional SQLite dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3 libsqlite3-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        working-directory: build
+        run: cpack
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsedge-release-archive
+          path: build/*.tar.gz
+          if-no-files-found: error
