@@ -156,8 +156,10 @@ int tsedge_block_skip_payload(FILE* f, const tsedge_block_header* header) {
     if (!f || !header) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
+#if UINT32_MAX > LONG_MAX
     if ((uint64_t)header->payload_size > (uint64_t)LONG_MAX) {
         return TSEDGE_ERR_CORRUPT;
     }
+#endif
     return fseek(f, (long)header->payload_size, SEEK_CUR) == 0 ? TSEDGE_OK : TSEDGE_ERR_IO;
 }

@@ -48,7 +48,8 @@ static int stop_after_first_cb(const tsedge_point* point, void* user_data) {
 static void rm_rf(const char* path) {
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
-    (void)system(cmd);
+    int rc = system(cmd);
+    (void)rc;
 }
 
 static const char* temp_path(const char* name) {
@@ -69,7 +70,7 @@ void test_open_close(void) {
 
 void test_append_read_aggregate_csv(void) {
     const char* path = temp_path("db");
-    char csv_path[256];
+    char csv_path[512];
     snprintf(csv_path, sizeof(csv_path), "%s/out.csv", path);
     tsedge_db* db = NULL;
     CHECK_OK(tsedge_open(path, &db));

@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "tsedge.h"
 
 #include <stdio.h>
@@ -5,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 extern int tsedge_test_failures;
@@ -42,7 +45,8 @@ static int collect_cb(const tsedge_point* point, void* user_data) {
 static void rm_rf(const char* path) {
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
-    (void)system(cmd);
+    int rc = system(cmd);
+    (void)rc;
 }
 
 static const char* temp_path(const char* name) {

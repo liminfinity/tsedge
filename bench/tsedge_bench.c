@@ -61,7 +61,8 @@ static double now_seconds(void) {
 static void rm_rf(const char* path) {
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
-    (void)system(cmd);
+    int rc = system(cmd);
+    (void)rc;
 }
 
 static uint64_t dir_size(const char* path) {
