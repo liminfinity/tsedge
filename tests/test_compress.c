@@ -32,6 +32,28 @@ static uint64_t double_bits(double value) {
     return bits;
 }
 
+static double bits_to_double(uint64_t bits) {
+    double value = 0.0;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static void check_value_roundtrip(const tsedge_point* points, size_t count) {
+    uint8_t* value_data = NULL;
+    size_t value_size = 0;
+    double* values = (double*)malloc(count * sizeof(*values));
+    CHECK(values != NULL);
+
+    CHECK_OK(tsedge_compress_values(points, count, &value_data, &value_size));
+    CHECK_OK(tsedge_decompress_values(value_data, value_size, count, values));
+    for (size_t i = 0; i < count; ++i) {
+        CHECK(double_bits(values[i]) == double_bits(points[i].value));
+    }
+
+    free(values);
+    free(value_data);
+}
+
 void test_compression_roundtrip(void) {
     /*
      * Roundtrip tests prove that compression is lossless. The value set includes
@@ -70,4 +92,39 @@ void test_compression_roundtrip(void) {
 
     free(ts_data);
     free(value_data);
+
+    tsedge_point repeated[16];
+    tsedge_point smooth[16];
+    tsedge_point negative[16];
+    for (size_t i = 0; i < 16; ++i) {
+        repeated[i].timestamp = (int64_t)i;
+        repeated[i].value = 42.0;
+        smooth[i].timestamp = (int64_t)i;
+        smooth[i].value = 100.0 + (double)i * 0.125;
+        negative[i].timestamp = (int64_t)i;
+        negative[i].value = -100.0 - (double)i * 0.5;
+    }
+    check_value_roundtrip(repeated, 16);
+    check_value_roundtrip(smooth, 16);
+    check_value_roundtrip(negative, 16);
+
+    tsedge_point zeroes[2] = {
+        {0, 0.0},
+        {1, -0.0},
+    };
+    check_value_roundtrip(zeroes, 2);
+
+    tsedge_point* random_points = (tsedge_point*)malloc(100000u * sizeof(*random_points));
+    CHECK(random_points != NULL);
+    uint64_t state = 0x123456789abcdef0ull;
+    for (size_t i = 0; i < 100000u; ++i) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        if ((state & 0x7ff0000000000000ull) == 0x7ff0000000000000ull) {
+            state ^= 0x0010000000000000ull;
+        }
+        random_points[i].timestamp = (int64_t)i;
+        random_points[i].value = bits_to_double(state);
+    }
+    check_value_roundtrip(random_points, 100000u);
+    free(random_points);
 }

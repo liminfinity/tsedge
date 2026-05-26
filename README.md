@@ -63,24 +63,30 @@ buffers so already persisted blocks are not replayed twice.
 Segment files contain a sequence of blocks. Multi-byte integers are encoded
 explicitly as little-endian values.
 
-Each block starts with a 48-byte header:
+Each block starts with a version 2 header:
 
 ```text
 u32 magic              "TSEB" as 0x42455354
-u32 version            1
+u32 version            2
 u32 point_count
-u32 compression_type   1 for delta timestamps + XOR values
+u32 compression_type   1 for delta timestamps + Gorilla-inspired XOR values
 i64 min_timestamp
 i64 max_timestamp
 u32 compressed_timestamp_size
 u32 compressed_value_size
 u32 payload_size
+f64 min_value
+f64 max_value
+f64 sum_value
 u32 reserved           0
 ```
 
 The header is followed by compressed timestamp bytes and compressed value bytes.
 The min/max timestamp metadata allows range queries to skip blocks that do not
-intersect the requested interval.
+intersect the requested interval. The value statistics allow aggregate queries
+to use fully covered blocks without decompressing them.
+
+More storage format details are in [docs/storage_format.md](docs/storage_format.md).
 
 ## Compression
 
@@ -97,10 +103,38 @@ Double values are encoded as:
 - first value as raw IEEE-754 64-bit bits
 - each next value as a marker:
   - `0` when XOR with previous value is zero
-  - `1` followed by the raw 64-bit XOR otherwise
+  - `1` followed by a byte-aligned significant XOR window when it saves space
+  - `2` followed by the raw 64-bit XOR as a worst-case fallback
 
 This is a simplified Gorilla-inspired XOR stream. It favors correctness and
 explainability over maximum compression ratio.
+
+## Implemented Optimizations
+
+- Block skipping by timestamp bounds during range reads.
+- WAL recovery for not-yet-flushed points.
+- WAL v2 entry validation with magic, version, entry size and checksum.
+- Optional WAL `fsync` mode through `TSEDGE_WAL_FSYNC`.
+- Block-level aggregate statistics for fully covered blocks.
+- In-memory block index rebuilt from segment headers at open.
+- Byte-aligned Gorilla-inspired value XOR encoding with raw fallback.
+
+Planned future optimizations are documented as limitations below where they are
+larger than a safe incremental change.
+
+## Limitations
+
+- No SQL parser or query language.
+- No network server, HTTP, MQTT, sockets, or replication.
+- No concurrent writer support.
+- No full ACID transaction system.
+- No production-grade WAL checkpointing.
+- No disk-based B+Tree index.
+- No segment rotation yet; each series currently uses `segment_000001.tse`.
+- The in-memory block index is rebuilt on open and is not persisted separately.
+- The value compression remains a simplified Gorilla-inspired XOR stream, not full
+  Gorilla bit-packing.
+- The prototype assumes mostly append-oriented time-series workloads.
 
 ## Benchmark
 
@@ -110,8 +144,8 @@ explainability over maximum compression ratio.
 
 Benchmark methodology is described in [docs/benchmarking.md](docs/benchmarking.md).
 
-The benchmark emits copy-friendly lines for smooth, noisy, and step-like
-datasets:
+The benchmark emits copy-friendly lines for `smooth`, `noisy`, `step`,
+`constant`, and `irregular_timestamps` datasets:
 
 ```text
 dataset=smooth

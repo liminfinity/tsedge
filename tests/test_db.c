@@ -1,3 +1,4 @@
+#include "db.h"
 #include "tsedge.h"
 
 #include <stdio.h>
@@ -35,6 +36,13 @@ static int collect_cb(const tsedge_point* point, void* user_data) {
         vec->points[vec->count++] = *point;
     }
     return 0;
+}
+
+static int stop_after_first_cb(const tsedge_point* point, void* user_data) {
+    (void)point;
+    size_t* count = (size_t*)user_data;
+    ++(*count);
+    return 1;
 }
 
 static void rm_rf(const char* path) {
@@ -127,6 +135,56 @@ void test_many_points_blocks_and_reopen(void) {
     CHECK(vec.count == 11);
     CHECK(vec.points[0].timestamp == 4090);
     CHECK(vec.points[10].timestamp == 4100);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_block_stats_aggregate_and_index(void) {
+    const char* path = temp_path("block_stats");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    for (int i = 0; i < 9000; ++i) {
+        CHECK_OK(tsedge_append(db, "s", i, (double)i));
+    }
+    CHECK_OK(tsedge_close(db));
+
+    db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    tsedge_series* series = tsedge_db_find_series(db, "s");
+    CHECK(series != NULL);
+    CHECK(series->block_index_count == 3);
+
+    double result = 0.0;
+    CHECK_OK(tsedge_aggregate(db, "s", 0, 4095, TSEDGE_AGG_SUM, &result));
+    CHECK(result == (4095.0 * 4096.0) / 2.0);
+    CHECK_OK(tsedge_aggregate(db, "s", 0, 4095, TSEDGE_AGG_COUNT, &result));
+    CHECK(result == 4096.0);
+    CHECK_OK(tsedge_aggregate(db, "s", 4090, 4105, TSEDGE_AGG_SUM, &result));
+    CHECK(result == ((4090.0 + 4105.0) * 16.0) / 2.0);
+    CHECK_OK(tsedge_aggregate(db, "s", 4090, 4105, TSEDGE_AGG_MIN, &result));
+    CHECK(result == 4090.0);
+    CHECK_OK(tsedge_aggregate(db, "s", 4090, 4105, TSEDGE_AGG_MAX, &result));
+    CHECK(result == 4105.0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_read_range_callback_stops_full_scan(void) {
+    const char* path = temp_path("stop_scan");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    for (int i = 0; i < 5000; ++i) {
+        CHECK_OK(tsedge_append(db, "s", i, (double)i));
+    }
+    CHECK_OK(tsedge_close(db));
+
+    db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    size_t count = 0;
+    CHECK_OK(tsedge_read_range(db, "s", 0, 4999, stop_after_first_cb, &count));
+    CHECK(count == 1);
     CHECK_OK(tsedge_close(db));
     rm_rf(path);
 }

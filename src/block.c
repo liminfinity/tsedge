@@ -5,14 +5,27 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 /*
  * Magic and version make accidental or future-incompatible files fail fast
  * instead of being decoded as valid blocks.
  */
 #define TSEDGE_BLOCK_MAGIC 0x42455354u
-#define TSEDGE_BLOCK_VERSION 1u
-#define TSEDGE_BLOCK_HEADER_SIZE 48u
+#define TSEDGE_BLOCK_VERSION 2u
+#define TSEDGE_BLOCK_HEADER_SIZE 72u
+
+static uint64_t double_to_bits(double value) {
+    uint64_t bits = 0;
+    memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+static double bits_to_double(uint64_t bits) {
+    double value = 0.0;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
 
 static int write_exact(FILE* f, const void* data, size_t size) {
     return fwrite(data, 1, size, f) == size ? TSEDGE_OK : TSEDGE_ERR_IO;
@@ -38,7 +51,10 @@ int tsedge_block_write_header(FILE* f, const tsedge_block_header* header) {
     tsedge_write_u32_le(buf + 32, header->timestamp_size);
     tsedge_write_u32_le(buf + 36, header->value_size);
     tsedge_write_u32_le(buf + 40, header->payload_size);
-    tsedge_write_u32_le(buf + 44, 0);
+    tsedge_write_u64_le(buf + 44, double_to_bits(header->min_value));
+    tsedge_write_u64_le(buf + 52, double_to_bits(header->max_value));
+    tsedge_write_u64_le(buf + 60, double_to_bits(header->sum_value));
+    tsedge_write_u32_le(buf + 68, 0);
     return write_exact(f, buf, sizeof(buf));
 }
 
@@ -71,14 +87,25 @@ int tsedge_block_read_header(FILE* f, tsedge_block_header* header, bool* eof) {
     header->timestamp_size = tsedge_read_u32_le(buf + 32);
     header->value_size = tsedge_read_u32_le(buf + 36);
     header->payload_size = tsedge_read_u32_le(buf + 40);
+    header->min_value = bits_to_double(tsedge_read_u64_le(buf + 44));
+    header->max_value = bits_to_double(tsedge_read_u64_le(buf + 52));
+    header->sum_value = bits_to_double(tsedge_read_u64_le(buf + 60));
+    uint32_t reserved = tsedge_read_u32_le(buf + 68);
 
     /*
      * The payload is trusted only if metadata is internally consistent. Segment
      * scans use payload_size to skip non-overlapping blocks without decoding.
      */
+    uint64_t expected_payload_size = (uint64_t)header->timestamp_size + (uint64_t)header->value_size;
     if (header->point_count == 0 ||
+        header->point_count > TSEDGE_BLOCK_MAX_POINTS ||
+        header->min_timestamp > header->max_timestamp ||
+        header->timestamp_size == 0 ||
+        header->value_size == 0 ||
         header->compression_type != TSEDGE_BLOCK_COMPRESSION_DELTA_XOR ||
-        header->payload_size != header->timestamp_size + header->value_size) {
+        expected_payload_size > UINT32_MAX ||
+        header->payload_size != (uint32_t)expected_payload_size ||
+        reserved != 0) {
         return TSEDGE_ERR_CORRUPT;
     }
     return TSEDGE_OK;
@@ -128,6 +155,9 @@ int tsedge_block_read_payload(FILE* f, const tsedge_block_header* header, uint8_
 int tsedge_block_skip_payload(FILE* f, const tsedge_block_header* header) {
     if (!f || !header) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    if ((uint64_t)header->payload_size > (uint64_t)LONG_MAX) {
+        return TSEDGE_ERR_CORRUPT;
     }
     return fseek(f, (long)header->payload_size, SEEK_CUR) == 0 ? TSEDGE_OK : TSEDGE_ERR_IO;
 }

@@ -14,7 +14,9 @@
 typedef enum {
     DATASET_SMOOTH,
     DATASET_NOISY,
-    DATASET_STEP
+    DATASET_STEP,
+    DATASET_CONSTANT,
+    DATASET_IRREGULAR_TIMESTAMPS
 } dataset_type;
 
 typedef struct {
@@ -42,9 +44,22 @@ static double sample_value(dataset_type type, size_t i) {
             return (double)rand() / (double)RAND_MAX;
         case DATASET_STEP:
             return 50.0 + (double)((i / 1000) % 20);
+        case DATASET_CONSTANT:
+            return 42.0;
+        case DATASET_IRREGULAR_TIMESTAMPS:
+            return 65.0 + sin((double)i * 0.002);
         default:
             return 0.0;
     }
+}
+
+static int64_t sample_timestamp(dataset_type type, size_t i) {
+    int64_t base = 1710000000000LL;
+    if (type == DATASET_IRREGULAR_TIMESTAMPS) {
+        int64_t jitter = (int64_t)((i % 11u) * (i % 11u) * 37u);
+        return base + (int64_t)i * 1000 + jitter;
+    }
+    return base + (int64_t)i * 1000;
 }
 
 static const char* dataset_name(dataset_type type) {
@@ -55,6 +70,10 @@ static const char* dataset_name(dataset_type type) {
             return "noisy";
         case DATASET_STEP:
             return "step";
+        case DATASET_CONSTANT:
+            return "constant";
+        case DATASET_IRREGULAR_TIMESTAMPS:
+            return "irregular_timestamps";
         default:
             return "unknown";
     }
@@ -138,7 +157,7 @@ static int load_data(sqlite3* db, dataset_type type, size_t points) {
 
     srand(1);
     for (size_t i = 0; i < points; ++i) {
-        sqlite3_bind_int64(stmt, 1, 1710000000000LL + (sqlite3_int64)i * 1000);
+        sqlite3_bind_int64(stmt, 1, (sqlite3_int64)sample_timestamp(type, i));
         sqlite3_bind_double(stmt, 2, sample_value(type, i));
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             fprintf(stderr, "sqlite insert: %s\n", sqlite3_errmsg(db));
@@ -271,7 +290,13 @@ int main(int argc, char** argv) {
         }
     }
 
-    dataset_type datasets[] = {DATASET_SMOOTH, DATASET_NOISY, DATASET_STEP};
+    dataset_type datasets[] = {
+        DATASET_SMOOTH,
+        DATASET_NOISY,
+        DATASET_STEP,
+        DATASET_CONSTANT,
+        DATASET_IRREGULAR_TIMESTAMPS
+    };
     for (size_t i = 0; i < sizeof(datasets) / sizeof(datasets[0]); ++i) {
         if (run_dataset(datasets[i], points, csv) != 0) {
             if (csv) {

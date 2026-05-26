@@ -44,6 +44,29 @@ static int create_metadata(const tsedge_series* series) {
     return fclose(f) == 0 ? TSEDGE_OK : TSEDGE_ERR_IO;
 }
 
+static int ensure_block_index_capacity(tsedge_series* series) {
+    if (series->block_index_count < series->block_index_capacity) {
+        return TSEDGE_OK;
+    }
+    size_t next = series->block_index_capacity == 0 ? 16u : series->block_index_capacity * 2u;
+    tsedge_block_index_entry* resized = (tsedge_block_index_entry*)realloc(series->block_index, next * sizeof(*series->block_index));
+    if (!resized) {
+        return TSEDGE_ERR_NO_MEMORY;
+    }
+    series->block_index = resized;
+    series->block_index_capacity = next;
+    return TSEDGE_OK;
+}
+
+static int add_block_index_entry(tsedge_series* series, const tsedge_block_index_entry* entry) {
+    int rc = ensure_block_index_capacity(series);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    series->block_index[series->block_index_count++] = *entry;
+    return TSEDGE_OK;
+}
+
 int tsedge_series_init(tsedge_series* series, const char* series_dir, const char* name, bool create_dir) {
     if (!series || !series_dir || !name) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
@@ -78,6 +101,17 @@ int tsedge_series_init(tsedge_series* series, const char* series_dir, const char
             return rc;
         }
     }
+
+    /*
+     * The index is intentionally in-memory only. Opening a series scans block
+     * headers once, then range reads can seek directly to relevant offsets.
+     */
+    int rc = tsedge_segment_scan_index(series->segment_path, &series->block_index, &series->block_index_count);
+    if (rc != TSEDGE_OK) {
+        tsedge_series_free(series);
+        return rc;
+    }
+    series->block_index_capacity = series->block_index_count;
     return TSEDGE_OK;
 }
 
@@ -89,6 +123,7 @@ void tsedge_series_free(tsedge_series* series) {
     free(series->dir_path);
     free(series->segment_path);
     free(series->buffer);
+    free(series->block_index);
     memset(series, 0, sizeof(*series));
 }
 
@@ -104,7 +139,12 @@ int tsedge_series_flush(tsedge_db* db, tsedge_series* series, bool update_wal) {
      * A flush is the point where buffered rows become an immutable compressed
      * block on disk. After that, WAL can forget the flushed rows.
      */
-    int rc = tsedge_segment_append_block(series->segment_path, series->buffer, series->buffer_count);
+    tsedge_block_index_entry entry;
+    int rc = tsedge_segment_append_block(series->segment_path, series->buffer, series->buffer_count, &entry);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    rc = add_block_index_entry(series, &entry);
     if (rc != TSEDGE_OK) {
         return rc;
     }
@@ -171,9 +211,22 @@ int tsedge_series_read_range(tsedge_series* series, int64_t from_timestamp, int6
      * Persisted blocks are scanned first. Segment metadata lets the lower layer
      * skip blocks whose min/max timestamps cannot match the requested range.
      */
-    int rc = tsedge_segment_read_range(series->segment_path, from_timestamp, to_timestamp, callback, user_data);
+    bool stopped = false;
+    int rc = tsedge_segment_read_range_indexed(
+        series->segment_path,
+        series->block_index,
+        series->block_index_count,
+        from_timestamp,
+        to_timestamp,
+        callback,
+        user_data,
+        &stopped
+    );
     if (rc != TSEDGE_OK) {
         return rc;
+    }
+    if (stopped) {
+        return TSEDGE_OK;
     }
 
     /* The memory buffer is part of the visible series even before it is flushed. */
@@ -187,64 +240,70 @@ int tsedge_series_read_range(tsedge_series* series, int64_t from_timestamp, int6
     return TSEDGE_OK;
 }
 
-typedef struct {
-    double min_value;
-    double max_value;
-    double sum;
-    size_t count;
-} aggregate_ctx;
-
-static int aggregate_cb(const tsedge_point* point, void* user_data) {
-    aggregate_ctx* ctx = (aggregate_ctx*)user_data;
-    if (ctx->count == 0) {
-        ctx->min_value = point->value;
-        ctx->max_value = point->value;
+static void aggregate_add_value(tsedge_aggregate_state* state, double value) {
+    if (state->count == 0) {
+        state->min_value = value;
+        state->max_value = value;
     }
-    if (point->value < ctx->min_value) {
-        ctx->min_value = point->value;
+    if (value < state->min_value) {
+        state->min_value = value;
     }
-    if (point->value > ctx->max_value) {
-        ctx->max_value = point->value;
+    if (value > state->max_value) {
+        state->max_value = value;
     }
-    ctx->sum += point->value;
-    ++ctx->count;
-    return 0;
+    state->sum_value += value;
+    ++state->count;
 }
 
 int tsedge_series_aggregate(tsedge_series* series, int64_t from_timestamp, int64_t to_timestamp, tsedge_agg_type type, double* out_result) {
-    if (!out_result) {
+    if (!series || !out_result || from_timestamp > to_timestamp) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
 
     /*
-     * Aggregation reuses read_range callbacks and updates a small accumulator,
-     * so large query ranges do not require allocating all decoded points.
+     * Aggregation is still streaming for partial blocks and buffers, but fully
+     * covered persisted blocks can now contribute their stored statistics
+     * without decoding every point.
      */
-    aggregate_ctx ctx;
-    memset(&ctx, 0, sizeof(ctx));
-    int rc = tsedge_series_read_range(series, from_timestamp, to_timestamp, aggregate_cb, &ctx);
+    tsedge_aggregate_state state;
+    memset(&state, 0, sizeof(state));
+    int rc = tsedge_segment_aggregate(
+        series->segment_path,
+        series->block_index,
+        series->block_index_count,
+        from_timestamp,
+        to_timestamp,
+        &state
+    );
     if (rc != TSEDGE_OK) {
         return rc;
     }
-    if (ctx.count == 0 && type != TSEDGE_AGG_COUNT) {
+
+    for (size_t i = 0; i < series->buffer_count; ++i) {
+        if (series->buffer[i].timestamp >= from_timestamp && series->buffer[i].timestamp <= to_timestamp) {
+            aggregate_add_value(&state, series->buffer[i].value);
+        }
+    }
+
+    if (state.count == 0 && type != TSEDGE_AGG_COUNT) {
         return TSEDGE_ERR_NOT_FOUND;
     }
 
     switch (type) {
         case TSEDGE_AGG_MIN:
-            *out_result = ctx.min_value;
+            *out_result = state.min_value;
             return TSEDGE_OK;
         case TSEDGE_AGG_MAX:
-            *out_result = ctx.max_value;
+            *out_result = state.max_value;
             return TSEDGE_OK;
         case TSEDGE_AGG_SUM:
-            *out_result = ctx.sum;
+            *out_result = state.sum_value;
             return TSEDGE_OK;
         case TSEDGE_AGG_AVG:
-            *out_result = ctx.sum / (double)ctx.count;
+            *out_result = state.sum_value / (double)state.count;
             return TSEDGE_OK;
         case TSEDGE_AGG_COUNT:
-            *out_result = (double)ctx.count;
+            *out_result = (double)state.count;
             return TSEDGE_OK;
         default:
             return TSEDGE_ERR_INVALID_ARGUMENT;

@@ -23,6 +23,20 @@ On macOS, the shared library is built as `libtsedge.dylib`.
 
 The static library target builds `libtsedge.a`.
 
+## Optional WAL fsync
+
+By default, WAL writes use normal buffered filesystem I/O. For stronger
+durability during crash experiments, enable compile-time WAL syncing:
+
+```bash
+cmake -DTSEDGE_WAL_FSYNC=ON ..
+cmake --build .
+```
+
+When enabled, each WAL append performs `fflush` and `fsync` where available.
+This can improve durability of acknowledged appends, but it may reduce write
+throughput in benchmarks.
+
 ## Run Demo
 
 From the build directory:

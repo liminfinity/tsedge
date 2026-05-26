@@ -21,7 +21,13 @@ typedef enum {
     DATASET_NOISY,
 
     /* Step data checks behavior when values repeat for long runs. */
-    DATASET_STEP
+    DATASET_STEP,
+
+    /* Constant data is the best case for XOR value compression. */
+    DATASET_CONSTANT,
+
+    /* Irregular timestamps stress delta-of-delta timestamp compression. */
+    DATASET_IRREGULAR_TIMESTAMPS
 } dataset_type;
 
 typedef struct {
@@ -86,9 +92,29 @@ static double sample_value(dataset_type type, size_t i) {
             return (double)rand() / (double)RAND_MAX;
         case DATASET_STEP:
             return 50.0 + (double)((i / 1000) % 20);
+        case DATASET_CONSTANT:
+            return 42.0;
+        case DATASET_IRREGULAR_TIMESTAMPS:
+            return 65.0 + sin((double)i * 0.002);
         default:
             return 0.0;
     }
+}
+
+static int64_t sample_timestamp(dataset_type type, size_t i) {
+    int64_t base = 1710000000000LL;
+    if (type == DATASET_IRREGULAR_TIMESTAMPS) {
+        int64_t jitter = (int64_t)((i % 11u) * (i % 11u) * 37u);
+        return base + (int64_t)i * 1000 + jitter;
+    }
+    return base + (int64_t)i * 1000;
+}
+
+static int64_t range_end_timestamp(dataset_type type, size_t points) {
+    if (points == 0) {
+        return sample_timestamp(type, 0);
+    }
+    return sample_timestamp(type, points - 1u) + 5000;
 }
 
 static const char* dataset_name(dataset_type type) {
@@ -99,6 +125,10 @@ static const char* dataset_name(dataset_type type) {
             return "noisy";
         case DATASET_STEP:
             return "step";
+        case DATASET_CONSTANT:
+            return "constant";
+        case DATASET_IRREGULAR_TIMESTAMPS:
+            return "irregular_timestamps";
         default:
             return "unknown";
     }
@@ -177,7 +207,7 @@ static int run_dataset(dataset_type type, size_t points, FILE* csv) {
     srand(1);
     double start = now_seconds();
     for (size_t i = 0; i < points; ++i) {
-        rc = tsedge_append(db, "bench.value", 1710000000000LL + (int64_t)i * 1000, sample_value(type, i));
+        rc = tsedge_append(db, "bench.value", sample_timestamp(type, i), sample_value(type, i));
         if (rc != TSEDGE_OK) {
             fprintf(stderr, "append: %s\n", tsedge_strerror(rc));
             return 1;
@@ -200,7 +230,7 @@ static int run_dataset(dataset_type type, size_t points, FILE* csv) {
     read_counter counter;
     counter.count = 0;
     start = now_seconds();
-    rc = tsedge_read_range(db, "bench.value", 1710000000000LL, 1710000000000LL + (int64_t)points * 1000, count_cb, &counter);
+    rc = tsedge_read_range(db, "bench.value", sample_timestamp(type, 0), range_end_timestamp(type, points), count_cb, &counter);
     double read_seconds = now_seconds() - start;
     if (rc != TSEDGE_OK) {
         fprintf(stderr, "read: %s\n", tsedge_strerror(rc));
@@ -209,7 +239,7 @@ static int run_dataset(dataset_type type, size_t points, FILE* csv) {
 
     double aggregate = 0.0;
     start = now_seconds();
-    rc = tsedge_aggregate(db, "bench.value", 1710000000000LL, 1710000000000LL + (int64_t)points * 1000, TSEDGE_AGG_AVG, &aggregate);
+    rc = tsedge_aggregate(db, "bench.value", sample_timestamp(type, 0), range_end_timestamp(type, points), TSEDGE_AGG_AVG, &aggregate);
     double avg_seconds = now_seconds() - start;
     if (rc != TSEDGE_OK) {
         fprintf(stderr, "aggregate: %s\n", tsedge_strerror(rc));
@@ -257,23 +287,20 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    if (run_dataset(DATASET_SMOOTH, points, csv) != 0) {
-        if (csv) {
-            fclose(csv);
+    dataset_type datasets[] = {
+        DATASET_SMOOTH,
+        DATASET_NOISY,
+        DATASET_STEP,
+        DATASET_CONSTANT,
+        DATASET_IRREGULAR_TIMESTAMPS
+    };
+    for (size_t i = 0; i < sizeof(datasets) / sizeof(datasets[0]); ++i) {
+        if (run_dataset(datasets[i], points, csv) != 0) {
+            if (csv) {
+                fclose(csv);
+            }
+            return 1;
         }
-        return 1;
-    }
-    if (run_dataset(DATASET_NOISY, points, csv) != 0) {
-        if (csv) {
-            fclose(csv);
-        }
-        return 1;
-    }
-    if (run_dataset(DATASET_STEP, points, csv) != 0) {
-        if (csv) {
-            fclose(csv);
-        }
-        return 1;
     }
     if (csv && fclose(csv) != 0) {
         return 1;

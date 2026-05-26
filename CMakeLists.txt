@@ -11,6 +11,8 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+option(TSEDGE_WAL_FSYNC "Flush and fsync WAL entries before append returns" OFF)
+
 set(TSEDGE_PUBLIC_HEADERS
     include/tsedge.h
 )
@@ -40,6 +42,7 @@ set(TSEDGE_SOURCES
 
 set(TSEDGE_TEST_SOURCES
     tests/test_main.c
+    tests/test_block.c
     tests/test_compress.c
     tests/test_db.c
     tests/test_recovery.c
@@ -109,6 +112,11 @@ target_include_directories(tsedge_static
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(tsedge PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(tsedge_static PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(TSEDGE_WAL_FSYNC)
+    target_compile_definitions(tsedge PRIVATE TSEDGE_WAL_FSYNC)
+    target_compile_definitions(tsedge_static PRIVATE TSEDGE_WAL_FSYNC)
 endif()
 
 add_executable(tsedge_demo ${TSEDGE_DEMO_SOURCES})

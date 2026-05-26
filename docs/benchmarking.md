@@ -23,6 +23,10 @@ The benchmark uses synthetic datasets:
 - `smooth`: slowly changing values with small noise.
 - `noisy`: random values.
 - `step`: values that stay constant for a range of points, then change.
+- `constant`: identical values, useful for showing the best case for XOR value
+  compression.
+- `irregular_timestamps`: non-uniform timestamp intervals, useful for showing
+  delta-of-delta behavior when sampling is not perfectly regular.
 
 ## Metrics
 
@@ -36,6 +40,8 @@ Useful benchmark metrics include:
 - `size_bytes`
 - `raw_size_bytes`
 - `compression_ratio`
+- Optional scan counters such as `block_count`, `decoded_block_count`, and
+  `skipped_block_count` may be added later; notebooks tolerate their absence.
 
 The current benchmark output includes throughput, aggregate time, database size,
 raw binary size, and compression ratio.

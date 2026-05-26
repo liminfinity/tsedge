@@ -24,6 +24,14 @@ typedef struct tsedge_series {
     tsedge_point* buffer;
     size_t buffer_count;
     size_t buffer_capacity;
+
+    /*
+     * Volatile block index built from segment metadata on open. It is not part
+     * of the public API and can be rebuilt from the segment file at any time.
+     */
+    tsedge_block_index_entry* block_index;
+    size_t block_index_count;
+    size_t block_index_capacity;
 } tsedge_series;
 
 int tsedge_series_validate_name(const char* name);

@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-*/
 cmake-build-*/
 out/
 
@@ -35,6 +36,7 @@ test_db/
 *.csv
 results/
 benchmark_results/
+benchmark_results*/
 *.db
 *.sqlite
 *.sqlite3

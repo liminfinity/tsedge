@@ -108,6 +108,10 @@ Parameters:
 - `callback`: function called for each matching point.
 - `user_data`: pointer passed through to the callback.
 
+If the callback returns a non-zero value, the range scan stops early and
+`tsedge_read_range` still returns `TSEDGE_OK`. This is intended for callers that
+only need the first matching point or want to cancel a scan.
+
 Returns:
 
 - `TSEDGE_OK` on success.

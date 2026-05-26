@@ -14,7 +14,9 @@
 typedef enum {
     DATASET_SMOOTH,
     DATASET_NOISY,
-    DATASET_STEP
+    DATASET_STEP,
+    DATASET_CONSTANT,
+    DATASET_IRREGULAR_TIMESTAMPS
 } dataset_type;
 
 typedef enum {
@@ -47,9 +49,22 @@ static double sample_value(dataset_type type, size_t i) {
             return (double)rand() / (double)RAND_MAX;
         case DATASET_STEP:
             return 50.0 + (double)((i / 1000) % 20);
+        case DATASET_CONSTANT:
+            return 42.0;
+        case DATASET_IRREGULAR_TIMESTAMPS:
+            return 65.0 + sin((double)i * 0.002);
         default:
             return 0.0;
     }
+}
+
+static int64_t sample_timestamp(dataset_type type, size_t i) {
+    int64_t base = 1710000000000LL;
+    if (type == DATASET_IRREGULAR_TIMESTAMPS) {
+        int64_t jitter = (int64_t)((i % 11u) * (i % 11u) * 37u);
+        return base + (int64_t)i * 1000 + jitter;
+    }
+    return base + (int64_t)i * 1000;
 }
 
 static const char* dataset_name(dataset_type type) {
@@ -60,6 +75,10 @@ static const char* dataset_name(dataset_type type) {
             return "noisy";
         case DATASET_STEP:
             return "step";
+        case DATASET_CONSTANT:
+            return "constant";
+        case DATASET_IRREGULAR_TIMESTAMPS:
+            return "irregular_timestamps";
         default:
             return "unknown";
     }
@@ -129,7 +148,7 @@ static int write_raw(const char* path, dataset_type type, size_t points) {
         return 1;
     }
     for (size_t i = 0; i < points; ++i) {
-        int64_t timestamp = 1710000000000LL + (int64_t)i * 1000;
+        int64_t timestamp = sample_timestamp(type, i);
         double value = sample_value(type, i);
         if (fwrite(&timestamp, sizeof(timestamp), 1, f) != 1 || fwrite(&value, sizeof(value), 1, f) != 1) {
             fclose(f);
@@ -149,7 +168,7 @@ static int write_text_csv(const char* path, dataset_type type, size_t points) {
         return 1;
     }
     for (size_t i = 0; i < points; ++i) {
-        int64_t timestamp = 1710000000000LL + (int64_t)i * 1000;
+        int64_t timestamp = sample_timestamp(type, i);
         if (fprintf(f, "%" PRId64 ",%.17g\n", timestamp, sample_value(type, i)) < 0) {
             fclose(f);
             return 1;
@@ -320,7 +339,13 @@ int main(int argc, char** argv) {
         }
     }
 
-    dataset_type datasets[] = {DATASET_SMOOTH, DATASET_NOISY, DATASET_STEP};
+    dataset_type datasets[] = {
+        DATASET_SMOOTH,
+        DATASET_NOISY,
+        DATASET_STEP,
+        DATASET_CONSTANT,
+        DATASET_IRREGULAR_TIMESTAMPS
+    };
     file_format formats[] = {FORMAT_RAW, FORMAT_CSV};
     for (size_t f = 0; f < sizeof(formats) / sizeof(formats[0]); ++f) {
         for (size_t d = 0; d < sizeof(datasets) / sizeof(datasets[0]); ++d) {

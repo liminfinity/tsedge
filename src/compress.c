@@ -17,6 +17,28 @@ static double bits_to_double(uint64_t bits) {
     return value;
 }
 
+static unsigned leading_zero_bytes(uint64_t value) {
+    unsigned count = 0;
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        if (((value >> shift) & 0xffu) != 0) {
+            break;
+        }
+        ++count;
+    }
+    return count;
+}
+
+static unsigned trailing_zero_bytes(uint64_t value) {
+    unsigned count = 0;
+    for (int shift = 0; shift <= 56; shift += 8) {
+        if (((value >> shift) & 0xffu) != 0) {
+            break;
+        }
+        ++count;
+    }
+    return count;
+}
+
 int tsedge_compress_timestamps(const tsedge_point* points, size_t count, uint8_t** out, size_t* out_size) {
     if ((!points && count > 0) || !out || !out_size) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
@@ -125,16 +147,24 @@ int tsedge_compress_values(const tsedge_point* points, size_t count, uint8_t** o
     }
 
     /*
-     * This simplified Gorilla-inspired scheme stores the first double as raw
-     * bits and then stores XOR differences from the previous value. It is not
-     * intended to outperform Gorilla; correctness is the goal here.
+     * This Gorilla-inspired scheme stores the first double as raw bits and then
+     * stores XOR differences from the previous value. Non-zero XOR values use a
+     * byte-aligned significant-window encoding when it saves space, otherwise a
+     * raw XOR fallback keeps the worst case bounded. The roundtrip is exact.
      */
     size_t size = 8;
     uint64_t prev = double_to_bits(points[0].value);
     for (size_t i = 1; i < count; ++i) {
         uint64_t current = double_to_bits(points[i].value);
         uint64_t xor_value = prev ^ current;
-        size += xor_value == 0 ? 1 : 9;
+        if (xor_value == 0) {
+            size += 1;
+        } else {
+            unsigned leading = leading_zero_bytes(xor_value);
+            unsigned trailing = trailing_zero_bytes(xor_value);
+            unsigned significant = 8u - leading - trailing;
+            size += significant + 3u < 9u ? significant + 3u : 9u;
+        }
         prev = current;
     }
 
@@ -154,9 +184,23 @@ int tsedge_compress_values(const tsedge_point* points, size_t count, uint8_t** o
         if (xor_value == 0) {
             *cursor++ = 0;
         } else {
-            *cursor++ = 1;
-            tsedge_write_u64_le(cursor, xor_value);
-            cursor += 8;
+            unsigned leading = leading_zero_bytes(xor_value);
+            unsigned trailing = trailing_zero_bytes(xor_value);
+            unsigned significant = 8u - leading - trailing;
+            if (significant + 3u < 9u) {
+                *cursor++ = 1;
+                *cursor++ = (uint8_t)leading;
+                *cursor++ = (uint8_t)significant;
+                for (unsigned j = 0; j < significant; ++j) {
+                    unsigned byte_index = leading + j;
+                    unsigned shift = (7u - byte_index) * 8u;
+                    *cursor++ = (uint8_t)((xor_value >> shift) & 0xffu);
+                }
+            } else {
+                *cursor++ = 2;
+                tsedge_write_u64_le(cursor, xor_value);
+                cursor += 8;
+            }
         }
         prev = current;
     }
@@ -194,6 +238,25 @@ int tsedge_decompress_values(const uint8_t* data, size_t size, size_t count, dou
         uint8_t marker = *cursor++;
         uint64_t current = prev;
         if (marker == 1) {
+            if ((size_t)(end - cursor) < 2) {
+                return TSEDGE_ERR_CORRUPT;
+            }
+            unsigned leading = *cursor++;
+            unsigned significant = *cursor++;
+            if (leading >= 8u || significant == 0 || significant > 8u || leading + significant > 8u) {
+                return TSEDGE_ERR_CORRUPT;
+            }
+            if ((size_t)(end - cursor) < significant) {
+                return TSEDGE_ERR_CORRUPT;
+            }
+            uint64_t xor_value = 0;
+            for (unsigned j = 0; j < significant; ++j) {
+                unsigned byte_index = leading + j;
+                unsigned shift = (7u - byte_index) * 8u;
+                xor_value |= (uint64_t)(*cursor++) << shift;
+            }
+            current = prev ^ xor_value;
+        } else if (marker == 2) {
             if ((size_t)(end - cursor) < 8) {
                 return TSEDGE_ERR_CORRUPT;
             }

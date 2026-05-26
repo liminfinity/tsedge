@@ -33,7 +33,23 @@ typedef struct {
 
     /* Identifies the lossless compression scheme used by the payload. */
     uint32_t compression_type;
+
+    /*
+     * Precomputed aggregate statistics. When a query fully covers this block,
+     * aggregation can use these values without decompressing the payload.
+     */
+    double min_value;
+    double max_value;
+    double sum_value;
 } tsedge_block_header;
+
+typedef struct {
+    long offset;
+    int64_t min_timestamp;
+    int64_t max_timestamp;
+    uint32_t point_count;
+    uint32_t payload_size;
+} tsedge_block_index_entry;
 
 int tsedge_block_write_header(FILE* f, const tsedge_block_header* header);
 int tsedge_block_read_header(FILE* f, tsedge_block_header* header, bool* eof);
