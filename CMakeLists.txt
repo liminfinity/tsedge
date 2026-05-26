@@ -132,7 +132,12 @@ tsedge_link_math(file_bench)
 
 if(SQLite3_FOUND)
     add_executable(sqlite_bench ${TSEDGE_SQLITE_BENCH_SOURCES})
-    target_link_libraries(sqlite_bench PRIVATE SQLite3::SQLite3)
+    if(TARGET SQLite3::SQLite3)
+        target_link_libraries(sqlite_bench PRIVATE SQLite3::SQLite3)
+    else()
+        target_include_directories(sqlite_bench PRIVATE ${SQLite3_INCLUDE_DIRS})
+        target_link_libraries(sqlite_bench PRIVATE ${SQLite3_LIBRARIES})
+    endif()
     tsedge_link_math(sqlite_bench)
 endif()
 
