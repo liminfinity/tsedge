@@ -94,6 +94,102 @@ Example:
 tsedge_append(db, "motor.temperature", 1710000000000LL, 72.4);
 ```
 
+## `tsedge_append_batch`
+
+Appends multiple points to an existing series. The public argument validation
+and series lookup are performed once for the whole batch, while each point still
+uses the same WAL-before-buffer append path as `tsedge_append`.
+
+Parameters:
+
+- `db`: database handle.
+- `series_name`: existing series name.
+- `points`: array of points to append.
+- `count`: number of points in the array.
+
+Returns:
+
+- `TSEDGE_OK` on success.
+- `TSEDGE_OK` when `count` is `0`; in this case `points` may be `NULL`.
+- `TSEDGE_ERR_NOT_FOUND` if the series does not exist.
+- Other error statuses for invalid arguments, I/O failures, or allocation
+  failures.
+
+If an error happens after some points have already been written, those earlier
+points may remain accepted and visible after recovery. The function does not
+provide all-or-nothing batch transactions.
+
+Example:
+
+```c
+tsedge_point points[3] = {
+    {1710000000000LL, 72.4},
+    {1710000001000LL, 72.5},
+    {1710000002000LL, 72.6},
+};
+
+tsedge_append_batch(db, "motor.temperature", points, 3);
+```
+
+## `tsedge_get_series_stats`
+
+Returns lightweight statistics for an existing series. The function uses the
+in-memory block index, the current unflushed buffer and the segment file size.
+It does not decompress block payloads or scan all stored points.
+
+The output structure is:
+
+```c
+typedef struct {
+    size_t block_count;
+    size_t buffered_points;
+    size_t total_indexed_points;
+    int has_time_range;
+    int64_t min_timestamp;
+    int64_t max_timestamp;
+    uint64_t segment_size_bytes;
+} tsedge_series_stats;
+```
+
+Fields:
+
+- `block_count`: number of blocks currently present in the in-memory block
+  index.
+- `buffered_points`: number of points still kept in the memory buffer.
+- `total_indexed_points`: sum of `point_count` across indexed blocks.
+- `has_time_range`: `1` when the series has at least one point in blocks or
+  buffer, otherwise `0`.
+- `min_timestamp` and `max_timestamp`: timestamp range across indexed blocks and
+  buffered points when `has_time_range` is `1`.
+- `segment_size_bytes`: size of `segment_000001.tse`; `0` when the segment file
+  does not exist yet.
+
+Parameters:
+
+- `db`: database handle.
+- `series_name`: existing series name.
+- `out_stats`: receives the statistics.
+
+Returns:
+
+- `TSEDGE_OK` on success.
+- `TSEDGE_ERR_NOT_FOUND` if the series does not exist.
+- Other error statuses for invalid arguments.
+
+Example:
+
+```c
+tsedge_series_stats stats;
+int rc = tsedge_get_series_stats(db, "motor.temperature", &stats);
+if (rc == TSEDGE_OK && stats.has_time_range) {
+    printf("blocks=%zu buffered=%zu range=%lld..%lld\n",
+           stats.block_count,
+           stats.buffered_points,
+           (long long)stats.min_timestamp,
+           (long long)stats.max_timestamp);
+}
+```
+
 ## `tsedge_read_range`
 
 Reads points from a series over an inclusive timestamp range and passes each

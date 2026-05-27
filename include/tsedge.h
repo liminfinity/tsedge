@@ -56,6 +56,22 @@ typedef struct {
 } tsedge_point;
 
 /**
+ * Lightweight metadata summary for one time series.
+ *
+ * The values are collected from the in-memory block index, the not-yet-flushed
+ * buffer, and the segment file size. Payload blocks are not decompressed.
+ */
+typedef struct {
+    size_t block_count;
+    size_t buffered_points;
+    size_t total_indexed_points;
+    int has_time_range;
+    int64_t min_timestamp;
+    int64_t max_timestamp;
+    uint64_t segment_size_bytes;
+} tsedge_series_stats;
+
+/**
  * Callback used by range reads.
  *
  * Returning a non-zero value stops the scan early. The callback receives a
@@ -101,6 +117,29 @@ int tsedge_create_series(tsedge_db* db, const char* name);
  * Returns TSEDGE_OK on success or a negative error code on failure.
  */
 int tsedge_append(tsedge_db* db, const char* series_name, int64_t timestamp, double value);
+
+/**
+ * Appends multiple points to an existing series.
+ *
+ * The series name is validated and resolved once, then each point follows the
+ * same WAL-before-buffer path as tsedge_append. If an error happens in the
+ * middle of the batch, points accepted before the error may remain stored.
+ *
+ * Passing count == 0 is a no-op and returns TSEDGE_OK.
+ *
+ * Returns TSEDGE_OK on success or a negative error code on failure.
+ */
+int tsedge_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count);
+
+/**
+ * Returns lightweight statistics for an existing series.
+ *
+ * The function uses block metadata and the current memory buffer, so it can
+ * report series state without scanning or decompressing all points.
+ *
+ * Returns TSEDGE_OK on success or a negative error code on failure.
+ */
+int tsedge_get_series_stats(tsedge_db* db, const char* series_name, tsedge_series_stats* out_stats);
 
 /**
  * Reads points from an inclusive timestamp range.

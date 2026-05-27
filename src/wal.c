@@ -121,6 +121,39 @@ int tsedge_wal_append(tsedge_db* db, const char* series_name, const tsedge_point
     return rc;
 }
 
+int tsedge_wal_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count) {
+    if (!db || !series_name || (!points && count > 0)) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    if (count == 0) {
+        return TSEDGE_OK;
+    }
+
+    /*
+     * Batch append keeps the WAL-before-buffer rule, but amortizes file open
+     * and sync overhead across a buffer-sized chunk of points.
+     */
+    FILE* f = fopen(db->wal_path, "ab");
+    if (!f) {
+        return TSEDGE_ERR_IO;
+    }
+
+    int rc = TSEDGE_OK;
+    for (size_t i = 0; i < count; ++i) {
+        rc = wal_write_entry(f, series_name, &points[i]);
+        if (rc != TSEDGE_OK) {
+            break;
+        }
+    }
+    if (rc == TSEDGE_OK) {
+        rc = wal_sync(f);
+    }
+    if (fclose(f) != 0 && rc == TSEDGE_OK) {
+        rc = TSEDGE_ERR_IO;
+    }
+    return rc;
+}
+
 int tsedge_wal_truncate_to_buffers(tsedge_db* db) {
     /*
      * Once a buffer is flushed into a segment block, those points are durable in

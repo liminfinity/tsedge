@@ -31,6 +31,21 @@ int main(void) {
     }
     printf("appended points: 10000\n");
 
+    tsedge_series_stats stats;
+    rc = tsedge_get_series_stats(db, "motor.temperature", &stats);
+    if (rc != TSEDGE_OK) {
+        fprintf(stderr, "get_series_stats failed: %s\n", tsedge_strerror(rc));
+        tsedge_close(db);
+        return 1;
+    }
+    printf(
+        "series stats: blocks=%zu buffered=%zu indexed_points=%zu segment_bytes=%llu\n",
+        stats.block_count,
+        stats.buffered_points,
+        stats.total_indexed_points,
+        (unsigned long long)stats.segment_size_bytes
+    );
+
     double avg = 0.0;
     rc = tsedge_aggregate(
         db,

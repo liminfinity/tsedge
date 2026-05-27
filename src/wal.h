@@ -12,6 +12,7 @@
  * it is not a full transactional subsystem like an industrial DBMS WAL.
  */
 int tsedge_wal_append(tsedge_db* db, const char* series_name, const tsedge_point* point);
+int tsedge_wal_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count);
 
 /* Replays WAL entries into series buffers during database open. */
 int tsedge_wal_replay(tsedge_db* db);

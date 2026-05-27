@@ -176,3 +176,35 @@ void test_wal_bad_checksum(void) {
     CHECK(tsedge_open(path, &reopened) == TSEDGE_ERR_CORRUPT);
     rm_rf(path);
 }
+
+void test_wal_recovery_after_batch_append(void) {
+    const char* path = temp_path("batch_recovery");
+    tsedge_point points[4] = {
+        {1, 10.0},
+        {2, 20.0},
+        {3, 30.0},
+        {4, 40.0},
+    };
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "recover"));
+    CHECK_OK(tsedge_append_batch(db, "recover", points, 4));
+
+    /*
+     * Batch append uses the same WAL-before-buffer rule as single append. By
+     * skipping close, this test leaves accepted batch points only in WAL/buffer
+     * state and verifies that open can replay them.
+     */
+    db = NULL;
+
+    CHECK_OK(tsedge_open(path, &db));
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "recover", 1, 4, collect_cb, &vec));
+    CHECK(vec.count == 4);
+    CHECK(vec.points[0].value == 10.0);
+    CHECK(vec.points[3].value == 40.0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}

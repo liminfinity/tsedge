@@ -38,7 +38,9 @@ int tsedge_series_validate_name(const char* name);
 int tsedge_series_init(tsedge_series* series, const char* series_dir, const char* name, bool create_dir);
 void tsedge_series_free(tsedge_series* series);
 int tsedge_series_append(struct tsedge_db* db, tsedge_series* series, int64_t timestamp, double value);
+int tsedge_series_append_batch(struct tsedge_db* db, tsedge_series* series, const tsedge_point* points, size_t count);
 int tsedge_series_add_recovered_point(struct tsedge_db* db, tsedge_series* series, const tsedge_point* point);
+int tsedge_series_get_stats(const tsedge_series* series, tsedge_series_stats* out_stats);
 
 /* Converts the current buffer into one compressed block in the segment file. */
 int tsedge_series_flush(struct tsedge_db* db, tsedge_series* series, bool update_wal);

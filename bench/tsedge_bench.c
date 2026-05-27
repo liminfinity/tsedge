@@ -37,6 +37,8 @@ typedef struct {
 typedef struct {
     const char* system;
     const char* dataset;
+    const char* write_mode;
+    size_t batch_size;
     size_t points;
     double write_seconds;
     double read_seconds;
@@ -138,7 +140,7 @@ static const char* dataset_name(dataset_type type) {
 static int write_csv_header(FILE* csv) {
     return fprintf(
         csv,
-        "system,dataset,points,write_seconds,write_points_per_sec,read_seconds,read_points_per_sec,avg_seconds,size_bytes,raw_size_bytes,compression_ratio\n"
+        "system,dataset,write_mode,batch_size,points,write_seconds,write_points_per_sec,read_seconds,read_points_per_sec,avg_seconds,size_bytes,raw_size_bytes,compression_ratio\n"
     ) < 0 ? 1 : 0;
 }
 
@@ -149,6 +151,8 @@ static void print_result(const bench_result* result) {
 
     printf("system=%s\n", result->system);
     printf("dataset=%s\n", result->dataset);
+    printf("write_mode=%s\n", result->write_mode);
+    printf("batch_size=%zu\n", result->batch_size);
     printf("points=%zu\n", result->points);
     printf("write_seconds=%.6f\n", result->write_seconds);
     printf("write_points_per_sec=%.2f\n", write_pps);
@@ -169,9 +173,11 @@ static int write_csv_result(FILE* csv, const bench_result* result) {
     double ratio = result->size_bytes == 0 ? 0.0 : (double)result->raw_size_bytes / (double)result->size_bytes;
     return fprintf(
         csv,
-        "%s,%s,%zu,%.9f,%.2f,%.9f,%.2f,%.9f,%" PRIu64 ",%" PRIu64 ",%.9f\n",
+        "%s,%s,%s,%zu,%zu,%.9f,%.2f,%.9f,%.2f,%.9f,%" PRIu64 ",%" PRIu64 ",%.9f\n",
         result->system,
         result->dataset,
+        result->write_mode,
+        result->batch_size,
         result->points,
         result->write_seconds,
         write_pps,
@@ -184,13 +190,13 @@ static int write_csv_result(FILE* csv, const bench_result* result) {
     ) < 0 ? 1 : 0;
 }
 
-static int run_dataset(dataset_type type, size_t points, FILE* csv) {
+static int run_dataset(dataset_type type, size_t points, size_t batch_size, FILE* csv) {
     /*
      * The benchmark reports write/read throughput, aggregate timing and storage
      * size. Results depend on the device, compiler, filesystem and storage.
      */
     char path[256];
-    snprintf(path, sizeof(path), "/tmp/tsedge_bench_%s_%ld", dataset_name(type), (long)getpid());
+    snprintf(path, sizeof(path), "/tmp/tsedge_bench_%s_%zu_%ld", dataset_name(type), batch_size, (long)getpid());
     rm_rf(path);
 
     tsedge_db* db = NULL;
@@ -205,16 +211,48 @@ static int run_dataset(dataset_type type, size_t points, FILE* csv) {
         return 1;
     }
 
-    srand(1);
-    double start = now_seconds();
-    for (size_t i = 0; i < points; ++i) {
-        rc = tsedge_append(db, "bench.value", sample_timestamp(type, i), sample_value(type, i));
-        if (rc != TSEDGE_OK) {
-            fprintf(stderr, "append: %s\n", tsedge_strerror(rc));
+    tsedge_point* batch = NULL;
+    if (batch_size > 1) {
+        batch = (tsedge_point*)malloc(batch_size * sizeof(*batch));
+        if (!batch) {
+            tsedge_close(db);
+            rm_rf(path);
             return 1;
         }
     }
+
+    srand(1);
+    double start = now_seconds();
+    if (batch_size == 1) {
+        for (size_t i = 0; i < points; ++i) {
+            rc = tsedge_append(db, "bench.value", sample_timestamp(type, i), sample_value(type, i));
+            if (rc != TSEDGE_OK) {
+                fprintf(stderr, "append: %s\n", tsedge_strerror(rc));
+                free(batch);
+                return 1;
+            }
+        }
+    } else {
+        for (size_t i = 0; i < points;) {
+            size_t chunk = points - i;
+            if (chunk > batch_size) {
+                chunk = batch_size;
+            }
+            for (size_t j = 0; j < chunk; ++j) {
+                batch[j].timestamp = sample_timestamp(type, i + j);
+                batch[j].value = sample_value(type, i + j);
+            }
+            rc = tsedge_append_batch(db, "bench.value", batch, chunk);
+            if (rc != TSEDGE_OK) {
+                fprintf(stderr, "append_batch: %s\n", tsedge_strerror(rc));
+                free(batch);
+                return 1;
+            }
+            i += chunk;
+        }
+    }
     rc = tsedge_close(db);
+    free(batch);
     if (rc != TSEDGE_OK) {
         fprintf(stderr, "close: %s\n", tsedge_strerror(rc));
         return 1;
@@ -256,6 +294,8 @@ static int run_dataset(dataset_type type, size_t points, FILE* csv) {
     bench_result result;
     result.system = "tsedge";
     result.dataset = dataset_name(type);
+    result.write_mode = batch_size == 1 ? "append" : "append_batch";
+    result.batch_size = batch_size;
     result.points = counter.count;
     result.write_seconds = write_seconds;
     result.read_seconds = read_seconds;
@@ -295,12 +335,15 @@ int main(int argc, char** argv) {
         DATASET_CONSTANT,
         DATASET_IRREGULAR_TIMESTAMPS
     };
+    size_t batch_sizes[] = {1u, 100u, 1000u, 4096u};
     for (size_t i = 0; i < sizeof(datasets) / sizeof(datasets[0]); ++i) {
-        if (run_dataset(datasets[i], points, csv) != 0) {
-            if (csv) {
-                fclose(csv);
+        for (size_t j = 0; j < sizeof(batch_sizes) / sizeof(batch_sizes[0]); ++j) {
+            if (run_dataset(datasets[i], points, batch_sizes[j], csv) != 0) {
+                if (csv) {
+                    fclose(csv);
+                }
+                return 1;
             }
-            return 1;
         }
     }
     if (csv && fclose(csv) != 0) {

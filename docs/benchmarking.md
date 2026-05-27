@@ -13,8 +13,9 @@ The benchmark chapter may compare:
 - CSV files.
 - SQLite, if it is available and a separate comparison benchmark is added.
 
-`tsedge_bench` measures TSEdge directly. `file_bench` measures raw binary and
-CSV files. `sqlite_bench` is built only when SQLite3 is available.
+`tsedge_bench` measures TSEdge directly and includes both single-point appends
+and batch appends as write modes of the same system. `file_bench` measures raw
+binary and CSV files. `sqlite_bench` is built only when SQLite3 is available.
 
 ## Datasets
 
@@ -74,6 +75,11 @@ Each benchmark can also write a machine-readable CSV result file:
 ./file_bench 1000000 results_file.csv
 ./sqlite_bench 1000000 results_sqlite.csv
 ```
+
+`tsedge_bench` reports `write_mode` and `batch_size` for TSEdge rows. It keeps
+`system=tsedge` for both modes and compares `batch_size=1` using
+`tsedge_append` with batch sizes `100`, `1000`, and `4096` using
+`tsedge_append_batch`.
 
 From the repository root, the helper script writes the expected notebook input
 files into `benchmark_results/`:

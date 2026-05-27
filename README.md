@@ -60,11 +60,45 @@ The first version supports:
 - open/close database directory
 - create series
 - append `(int64 timestamp, double value)` points
+- append batches of `tsedge_point` values
+- inspect lightweight per-series statistics
 - read points by inclusive time range
 - aggregate min/max/sum/avg/count by range
 - export a range to CSV
 
 Function-level API notes are in [docs/api.md](docs/api.md).
+
+Batch append avoids repeating public validation and series lookup for every
+point:
+
+```c
+tsedge_point points[3] = {
+    {1710000000000LL, 72.4},
+    {1710000001000LL, 72.5},
+    {1710000002000LL, 72.6},
+};
+
+tsedge_append_batch(db, "motor.temperature", points, 3);
+```
+
+If a batch append fails partway through, points accepted before the error may
+remain stored. TSEdge does not provide all-or-nothing batch transactions.
+
+Series statistics can be read without decoding segment payloads:
+
+```c
+tsedge_series_stats stats;
+if (tsedge_get_series_stats(db, "motor.temperature", &stats) == TSEDGE_OK) {
+    printf("blocks=%zu buffered=%zu indexed=%zu segment_bytes=%llu\n",
+           stats.block_count,
+           stats.buffered_points,
+           stats.total_indexed_points,
+           (unsigned long long)stats.segment_size_bytes);
+}
+```
+
+The statistics are collected from the in-memory block index, the current buffer
+and the segment file size.
 
 ## Storage Layout
 
@@ -172,10 +206,14 @@ larger than a safe incremental change.
 Benchmark methodology is described in [docs/benchmarking.md](docs/benchmarking.md).
 
 The benchmark emits copy-friendly lines for `smooth`, `noisy`, `step`,
-`constant`, and `irregular_timestamps` datasets:
+`constant`, and `irregular_timestamps` datasets. For TSEdge it includes both
+single-point writes (`write_mode=append`, `batch_size=1`) and batch writes
+(`write_mode=append_batch`, with batch sizes such as `100`, `1000`, `4096`):
 
 ```text
 dataset=smooth
+write_mode=append_batch
+batch_size=1000
 points=1000000
 write_points_per_sec=...
 read_points_per_sec=...

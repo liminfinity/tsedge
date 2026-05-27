@@ -34,6 +34,8 @@ mkdir -p benchmark_results
 ./build/sqlite_bench 1000000 benchmark_results/sqlite.csv
 ```
 
+`tsedge_bench` writes both single-point and batch write modes into
+`benchmark_results/tsedge.csv` using the columns `write_mode` and `batch_size`.
 `sqlite_bench` is optional and exists only when CMake finds SQLite3.
 
 ## 3. Python Environment

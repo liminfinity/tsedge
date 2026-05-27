@@ -40,6 +40,39 @@ int tsedge_append(tsedge_db* db, const char* series_name, int64_t timestamp, dou
     return tsedge_series_append(db, series, timestamp, value);
 }
 
+int tsedge_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count) {
+    if (!db || (!points && count > 0)) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    if (count == 0) {
+        return TSEDGE_OK;
+    }
+    int rc = tsedge_series_validate_name(series_name);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    tsedge_series* series = tsedge_db_find_series(db, series_name);
+    if (!series) {
+        return TSEDGE_ERR_NOT_FOUND;
+    }
+    return tsedge_series_append_batch(db, series, points, count);
+}
+
+int tsedge_get_series_stats(tsedge_db* db, const char* series_name, tsedge_series_stats* out_stats) {
+    if (!db || !out_stats) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_series_validate_name(series_name);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    tsedge_series* series = tsedge_db_find_series(db, series_name);
+    if (!series) {
+        return TSEDGE_ERR_NOT_FOUND;
+    }
+    return tsedge_series_get_stats(series, out_stats);
+}
+
 int tsedge_read_range(
     tsedge_db* db,
     const char* series_name,

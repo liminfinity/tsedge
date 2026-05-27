@@ -45,6 +45,13 @@ static int stop_after_first_cb(const tsedge_point* point, void* user_data) {
     return 1;
 }
 
+static int count_cb(const tsedge_point* point, void* user_data) {
+    (void)point;
+    size_t* count = (size_t*)user_data;
+    ++(*count);
+    return 0;
+}
+
 static void rm_rf(const char* path) {
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
@@ -137,6 +144,179 @@ void test_many_points_blocks_and_reopen(void) {
     CHECK(vec.points[0].timestamp == 4090);
     CHECK(vec.points[10].timestamp == 4100);
     CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_append_batch_zero_one_many(void) {
+    const char* path = temp_path("batch_basic");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append_batch(db, "s", NULL, 0));
+
+    tsedge_point one = {10, 1.5};
+    CHECK_OK(tsedge_append_batch(db, "s", &one, 1));
+
+    tsedge_point points[4] = {
+        {20, 2.0},
+        {30, 3.0},
+        {40, 4.0},
+        {50, 5.0},
+    };
+    CHECK_OK(tsedge_append_batch(db, "s", points, 4));
+
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "s", 0, 100, collect_cb, &vec));
+    CHECK(vec.count == 5);
+    CHECK(vec.points[0].timestamp == 10);
+    CHECK(vec.points[4].timestamp == 50);
+
+    double result = 0.0;
+    CHECK_OK(tsedge_aggregate(db, "s", 0, 100, TSEDGE_AGG_SUM, &result));
+    CHECK(result == 15.5);
+    CHECK_OK(tsedge_aggregate(db, "s", 0, 100, TSEDGE_AGG_COUNT, &result));
+    CHECK(result == 5.0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_append_batch_multiple_blocks(void) {
+    const char* path = temp_path("batch_blocks");
+    size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS * 2u + 123u;
+    tsedge_point* points = (tsedge_point*)malloc(count * sizeof(*points));
+    CHECK(points != NULL);
+    for (size_t i = 0; i < count; ++i) {
+        points[i].timestamp = (int64_t)i;
+        points[i].value = (double)i;
+    }
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append_batch(db, "s", points, count));
+
+    size_t read_count = 0;
+    CHECK_OK(tsedge_read_range(db, "s", 0, (int64_t)count - 1, count_cb, &read_count));
+    CHECK(read_count == count);
+
+    double result = 0.0;
+    CHECK_OK(tsedge_aggregate(db, "s", 0, (int64_t)count - 1, TSEDGE_AGG_SUM, &result));
+    CHECK(result == ((double)(count - 1u) * (double)count) / 2.0);
+    CHECK_OK(tsedge_close(db));
+
+    db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    tsedge_series* series = tsedge_db_find_series(db, "s");
+    CHECK(series != NULL);
+    CHECK(series->block_index_count == 3);
+    read_count = 0;
+    CHECK_OK(tsedge_read_range(db, "s", 4090, 4105, count_cb, &read_count));
+    CHECK(read_count == 16);
+    CHECK_OK(tsedge_close(db));
+    free(points);
+    rm_rf(path);
+}
+
+void test_series_stats_empty_and_buffered(void) {
+    const char* path = temp_path("stats_buffered");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+
+    tsedge_series_stats stats;
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.block_count == 0);
+    CHECK(stats.buffered_points == 0);
+    CHECK(stats.total_indexed_points == 0);
+    CHECK(stats.has_time_range == 0);
+    CHECK(stats.segment_size_bytes == 0);
+
+    CHECK_OK(tsedge_append(db, "s", 30, 3.0));
+    CHECK_OK(tsedge_append(db, "s", 10, 1.0));
+    CHECK_OK(tsedge_append(db, "s", 20, 2.0));
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.block_count == 0);
+    CHECK(stats.buffered_points == 3);
+    CHECK(stats.total_indexed_points == 0);
+    CHECK(stats.has_time_range == 1);
+    CHECK(stats.min_timestamp == 10);
+    CHECK(stats.max_timestamp == 30);
+    CHECK(stats.segment_size_bytes == 0);
+
+    CHECK(tsedge_get_series_stats(db, "missing", &stats) == TSEDGE_ERR_NOT_FOUND);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_series_stats_blocks_and_reopen(void) {
+    const char* path = temp_path("stats_blocks");
+    size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS * 2u + 10u;
+    tsedge_point* points = (tsedge_point*)malloc(count * sizeof(*points));
+    CHECK(points != NULL);
+    for (size_t i = 0; i < count; ++i) {
+        points[i].timestamp = 1000 + (int64_t)i;
+        points[i].value = (double)i;
+    }
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append_batch(db, "s", points, count));
+
+    tsedge_series_stats stats;
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.block_count == 2);
+    CHECK(stats.buffered_points == 10);
+    CHECK(stats.total_indexed_points == (size_t)TSEDGE_BLOCK_MAX_POINTS * 2u);
+    CHECK(stats.has_time_range == 1);
+    CHECK(stats.min_timestamp == 1000);
+    CHECK(stats.max_timestamp == 1000 + (int64_t)count - 1);
+    CHECK(stats.segment_size_bytes > 0);
+
+    CHECK_OK(tsedge_close(db));
+    db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.block_count == 3);
+    CHECK(stats.buffered_points == 0);
+    CHECK(stats.total_indexed_points == count);
+    CHECK(stats.has_time_range == 1);
+    CHECK(stats.min_timestamp == 1000);
+    CHECK(stats.max_timestamp == 1000 + (int64_t)count - 1);
+    CHECK(stats.segment_size_bytes > 0);
+    CHECK_OK(tsedge_close(db));
+    free(points);
+    rm_rf(path);
+}
+
+void test_series_stats_after_single_block_flush(void) {
+    const char* path = temp_path("stats_one_block");
+    size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS + 1u;
+    tsedge_point* points = (tsedge_point*)malloc(count * sizeof(*points));
+    CHECK(points != NULL);
+    for (size_t i = 0; i < count; ++i) {
+        points[i].timestamp = (int64_t)i;
+        points[i].value = (double)i;
+    }
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append_batch(db, "s", points, count));
+
+    tsedge_series_stats stats;
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.block_count == 1);
+    CHECK(stats.buffered_points == 1);
+    CHECK(stats.total_indexed_points == TSEDGE_BLOCK_MAX_POINTS);
+    CHECK(stats.has_time_range == 1);
+    CHECK(stats.min_timestamp == 0);
+    CHECK(stats.max_timestamp == (int64_t)TSEDGE_BLOCK_MAX_POINTS);
+    CHECK(stats.segment_size_bytes > 0);
+
+    CHECK_OK(tsedge_close(db));
+    free(points);
     rm_rf(path);
 }
 

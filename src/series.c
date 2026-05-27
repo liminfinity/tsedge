@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static char* xstrdup(const char* s) {
     size_t len = strlen(s) + 1;
@@ -168,17 +169,13 @@ static int add_point_to_buffer(tsedge_db* db, tsedge_series* series, const tsedg
     return TSEDGE_OK;
 }
 
-int tsedge_series_append(tsedge_db* db, tsedge_series* series, int64_t timestamp, double value) {
-    if (!db || !series) {
+static int append_point_internal(tsedge_db* db, tsedge_series* series, const tsedge_point* point, bool write_wal, bool update_wal_on_flush) {
+    if (!db || !series || !point) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
 
-    tsedge_point point;
-    point.timestamp = timestamp;
-    point.value = value;
-
     if (series->buffer_count >= series->buffer_capacity) {
-        int rc = tsedge_series_flush(db, series, true);
+        int rc = tsedge_series_flush(db, series, update_wal_on_flush);
         if (rc != TSEDGE_OK) {
             return rc;
         }
@@ -188,18 +185,109 @@ int tsedge_series_append(tsedge_db* db, tsedge_series* series, int64_t timestamp
      * WAL is written before changing the in-memory buffer. If the process dies
      * after this point, open/replay can reconstruct the accepted append.
      */
-    int rc = tsedge_wal_append(db, series->name, &point);
-    if (rc != TSEDGE_OK) {
-        return rc;
+    if (write_wal) {
+        int rc = tsedge_wal_append(db, series->name, point);
+        if (rc != TSEDGE_OK) {
+            return rc;
+        }
     }
-    return add_point_to_buffer(db, series, &point, true);
+    return add_point_to_buffer(db, series, point, update_wal_on_flush);
+}
+
+int tsedge_series_append(tsedge_db* db, tsedge_series* series, int64_t timestamp, double value) {
+    tsedge_point point;
+    point.timestamp = timestamp;
+    point.value = value;
+    return append_point_internal(db, series, &point, true, true);
+}
+
+int tsedge_series_append_batch(tsedge_db* db, tsedge_series* series, const tsedge_point* points, size_t count) {
+    if (!db || !series || (!points && count > 0)) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+
+    size_t offset = 0;
+    while (offset < count) {
+        if (series->buffer_count >= series->buffer_capacity) {
+            int rc = tsedge_series_flush(db, series, true);
+            if (rc != TSEDGE_OK) {
+                return rc;
+            }
+        }
+
+        size_t available = series->buffer_capacity - series->buffer_count;
+        size_t chunk = count - offset;
+        if (chunk > available) {
+            chunk = available;
+        }
+
+        /*
+         * WAL is written for the whole chunk before any point from that chunk is
+         * copied into the memory buffer. If the WAL write fails, the chunk is
+         * rejected before visible in-memory state changes.
+         */
+        int rc = tsedge_wal_append_batch(db, series->name, points + offset, chunk);
+        if (rc != TSEDGE_OK) {
+            return rc;
+        }
+        memcpy(series->buffer + series->buffer_count, points + offset, chunk * sizeof(*points));
+        series->buffer_count += chunk;
+        offset += chunk;
+    }
+    return TSEDGE_OK;
 }
 
 int tsedge_series_add_recovered_point(tsedge_db* db, tsedge_series* series, const tsedge_point* point) {
     if (!db || !series || !point) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
-    return add_point_to_buffer(db, series, point, false);
+    return append_point_internal(db, series, point, false, false);
+}
+
+static void stats_add_timestamp(tsedge_series_stats* stats, int64_t timestamp) {
+    if (!stats->has_time_range) {
+        stats->has_time_range = 1;
+        stats->min_timestamp = timestamp;
+        stats->max_timestamp = timestamp;
+        return;
+    }
+    if (timestamp < stats->min_timestamp) {
+        stats->min_timestamp = timestamp;
+    }
+    if (timestamp > stats->max_timestamp) {
+        stats->max_timestamp = timestamp;
+    }
+}
+
+int tsedge_series_get_stats(const tsedge_series* series, tsedge_series_stats* out_stats) {
+    if (!series || !out_stats) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+
+    memset(out_stats, 0, sizeof(*out_stats));
+    out_stats->block_count = series->block_index_count;
+    out_stats->buffered_points = series->buffer_count;
+
+    /*
+     * Statistics are derived from block metadata and the live buffer only. This
+     * gives callers a cheap series summary without decompressing segment data.
+     */
+    for (size_t i = 0; i < series->block_index_count; ++i) {
+        const tsedge_block_index_entry* entry = &series->block_index[i];
+        out_stats->total_indexed_points += entry->point_count;
+        stats_add_timestamp(out_stats, entry->min_timestamp);
+        stats_add_timestamp(out_stats, entry->max_timestamp);
+    }
+
+    for (size_t i = 0; i < series->buffer_count; ++i) {
+        stats_add_timestamp(out_stats, series->buffer[i].timestamp);
+    }
+
+    struct stat st;
+    if (series->segment_path && stat(series->segment_path, &st) == 0 && st.st_size > 0) {
+        out_stats->segment_size_bytes = (uint64_t)st.st_size;
+    }
+    return TSEDGE_OK;
 }
 
 int tsedge_series_read_range(tsedge_series* series, int64_t from_timestamp, int64_t to_timestamp, tsedge_point_callback callback, void* user_data) {
