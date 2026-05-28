@@ -10,6 +10,7 @@
 
 #define TSEDGE_BLOCK_MAX_POINTS 4096u
 #define TSEDGE_BLOCK_COMPRESSION_DELTA_XOR 1u
+#define TSEDGE_BLOCK_HEADER_SIZE 72u
 
 /*
  * Metadata stored before every compressed block in a segment file.
@@ -44,6 +45,12 @@ typedef struct {
 } tsedge_block_header;
 
 typedef struct {
+    /*
+     * segment_id selects the segment file and offset selects the block inside
+     * that file. Together they let range reads and aggregates jump directly to
+     * candidate blocks after the index is rebuilt at open.
+     */
+    uint32_t segment_id;
     long offset;
     int64_t min_timestamp;
     int64_t max_timestamp;

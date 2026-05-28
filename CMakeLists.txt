@@ -12,32 +12,45 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 option(TSEDGE_WAL_FSYNC "Flush and fsync WAL entries before append returns" OFF)
+set(TSEDGE_SEGMENT_MAX_BYTES "" CACHE STRING "Override segment rotation limit in bytes")
 
 set(TSEDGE_PUBLIC_HEADERS
     include/tsedge.h
 )
 
 set(TSEDGE_PRIVATE_HEADERS
-    src/bitstream.h
-    src/block.h
-    src/compress.h
-    src/csv.h
-    src/db.h
-    src/segment.h
-    src/series.h
-    src/wal.h
+    src/compression/bitstream.h
+    src/compression/compress.h
+    src/core/db.h
+    src/core/series.h
+    src/core/series_index.h
+    src/core/series_query.h
+    src/core/series_retention.h
+    src/core/series_stats.h
+    src/export/csv.h
+    src/storage/block.h
+    src/storage/segment.h
+    src/storage/segment_files.h
+    src/storage/segment_rotation.h
+    src/storage/wal.h
 )
 
 set(TSEDGE_SOURCES
-    src/tsedge.c
-    src/bitstream.c
-    src/block.c
-    src/compress.c
-    src/csv.c
-    src/db.c
-    src/segment.c
-    src/series.c
-    src/wal.c
+    src/api/tsedge.c
+    src/compression/bitstream.c
+    src/compression/compress.c
+    src/core/db.c
+    src/core/series.c
+    src/core/series_index.c
+    src/core/series_query.c
+    src/core/series_retention.c
+    src/core/series_stats.c
+    src/export/csv.c
+    src/storage/block.c
+    src/storage/segment.c
+    src/storage/segment_files.c
+    src/storage/segment_rotation.c
+    src/storage/wal.c
 )
 
 set(TSEDGE_TEST_SOURCES
@@ -67,6 +80,14 @@ set(TSEDGE_SQLITE_BENCH_SOURCES
 find_library(TSEDGE_MATH_LIBRARY m)
 find_package(SQLite3 QUIET)
 
+set(TSEDGE_INTERNAL_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/api
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/compression
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/export
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/storage
+)
+
 function(tsedge_link_math target_name)
     if(TSEDGE_MATH_LIBRARY)
         target_link_libraries(${target_name} PRIVATE ${TSEDGE_MATH_LIBRARY})
@@ -85,6 +106,12 @@ add_library(tsedge_static STATIC
     ${TSEDGE_PRIVATE_HEADERS}
 )
 
+add_library(tsedge_testlib STATIC
+    ${TSEDGE_SOURCES}
+    ${TSEDGE_PUBLIC_HEADERS}
+    ${TSEDGE_PRIVATE_HEADERS}
+)
+
 set_target_properties(tsedge PROPERTIES
     OUTPUT_NAME tsedge
     VERSION ${PROJECT_VERSION}
@@ -95,29 +122,49 @@ set_target_properties(tsedge_static PROPERTIES
     OUTPUT_NAME tsedge
 )
 
+set_target_properties(tsedge_testlib PROPERTIES
+    OUTPUT_NAME tsedge_test
+)
+
 target_include_directories(tsedge
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${TSEDGE_INTERNAL_INCLUDE_DIRS}
 )
 
 target_include_directories(tsedge_static
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${TSEDGE_INTERNAL_INCLUDE_DIRS}
+)
+
+target_include_directories(tsedge_testlib
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${TSEDGE_INTERNAL_INCLUDE_DIRS}
 )
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(tsedge PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(tsedge_static PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(tsedge_testlib PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(TSEDGE_WAL_FSYNC)
     target_compile_definitions(tsedge PRIVATE TSEDGE_WAL_FSYNC)
     target_compile_definitions(tsedge_static PRIVATE TSEDGE_WAL_FSYNC)
+    target_compile_definitions(tsedge_testlib PRIVATE TSEDGE_WAL_FSYNC)
 endif()
+
+if(TSEDGE_SEGMENT_MAX_BYTES)
+    target_compile_definitions(tsedge PRIVATE TSEDGE_SEGMENT_MAX_BYTES=${TSEDGE_SEGMENT_MAX_BYTES})
+    target_compile_definitions(tsedge_static PRIVATE TSEDGE_SEGMENT_MAX_BYTES=${TSEDGE_SEGMENT_MAX_BYTES})
+endif()
+
+target_compile_definitions(tsedge_testlib PRIVATE TSEDGE_SEGMENT_MAX_BYTES=8192)
 
 add_executable(tsedge_demo ${TSEDGE_DEMO_SOURCES})
 target_link_libraries(tsedge_demo PRIVATE tsedge)
@@ -144,8 +191,8 @@ endif()
 enable_testing()
 
 add_executable(tsedge_tests ${TSEDGE_TEST_SOURCES})
-target_link_libraries(tsedge_tests PRIVATE tsedge)
-target_include_directories(tsedge_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(tsedge_tests PRIVATE tsedge_testlib)
+target_include_directories(tsedge_tests PRIVATE ${TSEDGE_INTERNAL_INCLUDE_DIRS})
 tsedge_link_math(tsedge_tests)
 
 add_test(NAME tsedge_tests COMMAND $<TARGET_FILE:tsedge_tests>)

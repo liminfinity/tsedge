@@ -98,7 +98,8 @@ static int block_fully_covered(const tsedge_block_header* header, int64_t from_t
     return header->min_timestamp >= from_timestamp && header->max_timestamp <= to_timestamp;
 }
 
-static void fill_index_entry(long offset, const tsedge_block_header* header, tsedge_block_index_entry* entry) {
+static void fill_index_entry(uint32_t segment_id, long offset, const tsedge_block_header* header, tsedge_block_index_entry* entry) {
+    entry->segment_id = segment_id;
     entry->offset = offset;
     entry->min_timestamp = header->min_timestamp;
     entry->max_timestamp = header->max_timestamp;
@@ -106,7 +107,7 @@ static void fill_index_entry(long offset, const tsedge_block_header* header, tse
     entry->payload_size = header->payload_size;
 }
 
-static int append_index_entry(tsedge_block_index_entry** entries, size_t* count, size_t* capacity, long offset, const tsedge_block_header* header) {
+static int append_index_entry(tsedge_block_index_entry** entries, size_t* count, size_t* capacity, uint32_t segment_id, long offset, const tsedge_block_header* header) {
     if (*count == *capacity) {
         size_t next = *capacity == 0 ? 16u : *capacity * 2u;
         tsedge_block_index_entry* resized = (tsedge_block_index_entry*)realloc(*entries, next * sizeof(**entries));
@@ -116,13 +117,39 @@ static int append_index_entry(tsedge_block_index_entry** entries, size_t* count,
         *entries = resized;
         *capacity = next;
     }
-    fill_index_entry(offset, header, &(*entries)[*count]);
+    fill_index_entry(segment_id, offset, header, &(*entries)[*count]);
     ++(*count);
     return TSEDGE_OK;
 }
 
+int tsedge_segment_estimate_block_size(const tsedge_point* points, size_t count, uint64_t* out_size) {
+    if ((!points && count > 0) || !out_size) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    *out_size = 0;
+    if (count == 0) {
+        return TSEDGE_OK;
+    }
+
+    uint8_t* timestamp_data = NULL;
+    uint8_t* value_data = NULL;
+    size_t timestamp_size = 0;
+    size_t value_size = 0;
+    int rc = tsedge_compress_timestamps(points, count, &timestamp_data, &timestamp_size);
+    if (rc == TSEDGE_OK) {
+        rc = tsedge_compress_values(points, count, &value_data, &value_size);
+    }
+    if (rc == TSEDGE_OK) {
+        *out_size = (uint64_t)TSEDGE_BLOCK_HEADER_SIZE + (uint64_t)timestamp_size + (uint64_t)value_size;
+    }
+    free(timestamp_data);
+    free(value_data);
+    return rc;
+}
+
 int tsedge_segment_append_block(
     const char* segment_path,
+    uint32_t segment_id,
     const tsedge_point* points,
     size_t count,
     tsedge_block_index_entry* out_index_entry
@@ -192,12 +219,12 @@ int tsedge_segment_append_block(
     free(value_data);
 
     if (rc == TSEDGE_OK && out_index_entry) {
-        fill_index_entry(offset, &header, out_index_entry);
+        fill_index_entry(segment_id, offset, &header, out_index_entry);
     }
     return rc;
 }
 
-int tsedge_segment_scan_index(const char* segment_path, tsedge_block_index_entry** out_entries, size_t* out_count) {
+int tsedge_segment_scan_index(const char* segment_path, uint32_t segment_id, tsedge_block_index_entry** out_entries, size_t* out_count) {
     if (!segment_path || !out_entries || !out_count) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
@@ -233,7 +260,7 @@ int tsedge_segment_scan_index(const char* segment_path, tsedge_block_index_entry
             break;
         }
 
-        rc = append_index_entry(&entries, &count, &capacity, offset, &header);
+        rc = append_index_entry(&entries, &count, &capacity, segment_id, offset, &header);
         if (rc == TSEDGE_OK) {
             rc = tsedge_block_skip_payload(f, &header);
         }

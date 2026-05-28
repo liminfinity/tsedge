@@ -45,6 +45,9 @@ typedef struct {
     double avg_seconds;
     uint64_t size_bytes;
     uint64_t raw_size_bytes;
+    size_t segment_count;
+    size_t block_count;
+    uint64_t total_segment_size_bytes;
 } bench_result;
 
 static int count_cb(const tsedge_point* point, void* user_data) {
@@ -140,7 +143,7 @@ static const char* dataset_name(dataset_type type) {
 static int write_csv_header(FILE* csv) {
     return fprintf(
         csv,
-        "system,dataset,write_mode,batch_size,points,write_seconds,write_points_per_sec,read_seconds,read_points_per_sec,avg_seconds,size_bytes,raw_size_bytes,compression_ratio\n"
+        "system,dataset,write_mode,batch_size,points,write_seconds,write_points_per_sec,read_seconds,read_points_per_sec,avg_seconds,size_bytes,raw_size_bytes,compression_ratio,segment_count,block_count,total_segment_size_bytes\n"
     ) < 0 ? 1 : 0;
 }
 
@@ -161,7 +164,10 @@ static void print_result(const bench_result* result) {
     printf("avg_seconds=%.6f\n", result->avg_seconds);
     printf("size_bytes=%" PRIu64 "\n", result->size_bytes);
     printf("raw_size_bytes=%" PRIu64 "\n", result->raw_size_bytes);
-    printf("compression_ratio=%.6f\n\n", ratio);
+    printf("compression_ratio=%.6f\n", ratio);
+    printf("segment_count=%zu\n", result->segment_count);
+    printf("block_count=%zu\n", result->block_count);
+    printf("total_segment_size_bytes=%" PRIu64 "\n\n", result->total_segment_size_bytes);
 }
 
 static int write_csv_result(FILE* csv, const bench_result* result) {
@@ -173,7 +179,7 @@ static int write_csv_result(FILE* csv, const bench_result* result) {
     double ratio = result->size_bytes == 0 ? 0.0 : (double)result->raw_size_bytes / (double)result->size_bytes;
     return fprintf(
         csv,
-        "%s,%s,%s,%zu,%zu,%.9f,%.2f,%.9f,%.2f,%.9f,%" PRIu64 ",%" PRIu64 ",%.9f\n",
+        "%s,%s,%s,%zu,%zu,%.9f,%.2f,%.9f,%.2f,%.9f,%" PRIu64 ",%" PRIu64 ",%.9f,%zu,%zu,%" PRIu64 "\n",
         result->system,
         result->dataset,
         result->write_mode,
@@ -186,7 +192,10 @@ static int write_csv_result(FILE* csv, const bench_result* result) {
         result->avg_seconds,
         result->size_bytes,
         result->raw_size_bytes,
-        ratio
+        ratio,
+        result->segment_count,
+        result->block_count,
+        result->total_segment_size_bytes
     ) < 0 ? 1 : 0;
 }
 
@@ -284,6 +293,14 @@ static int run_dataset(dataset_type type, size_t points, size_t batch_size, FILE
         fprintf(stderr, "aggregate: %s\n", tsedge_strerror(rc));
         return 1;
     }
+
+    tsedge_series_stats stats;
+    rc = tsedge_get_series_stats(db, "bench.value", &stats);
+    if (rc != TSEDGE_OK) {
+        fprintf(stderr, "series_stats: %s\n", tsedge_strerror(rc));
+        return 1;
+    }
+
     rc = tsedge_close(db);
     if (rc != TSEDGE_OK) {
         fprintf(stderr, "close2: %s\n", tsedge_strerror(rc));
@@ -302,6 +319,9 @@ static int run_dataset(dataset_type type, size_t points, size_t batch_size, FILE
     result.avg_seconds = avg_seconds;
     result.size_bytes = dir_size(path);
     result.raw_size_bytes = (uint64_t)points * 16u;
+    result.segment_count = stats.segment_count;
+    result.block_count = stats.block_count;
+    result.total_segment_size_bytes = stats.total_segment_size_bytes;
     print_result(&result);
     if (write_csv_result(csv, &result) != 0) {
         rm_rf(path);

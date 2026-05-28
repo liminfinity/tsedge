@@ -59,16 +59,19 @@ typedef struct {
  * Lightweight metadata summary for one time series.
  *
  * The values are collected from the in-memory block index, the not-yet-flushed
- * buffer, and the segment file size. Payload blocks are not decompressed.
+ * buffer, and segment file sizes. Payload blocks are not decompressed.
  */
 typedef struct {
     size_t block_count;
     size_t buffered_points;
     size_t total_indexed_points;
+    size_t segment_count;
     int has_time_range;
     int64_t min_timestamp;
     int64_t max_timestamp;
+    uint32_t active_segment_id;
     uint64_t segment_size_bytes;
+    uint64_t total_segment_size_bytes;
 } tsedge_series_stats;
 
 /**
@@ -140,6 +143,18 @@ int tsedge_append_batch(tsedge_db* db, const char* series_name, const tsedge_poi
  * Returns TSEDGE_OK on success or a negative error code on failure.
  */
 int tsedge_get_series_stats(tsedge_db* db, const char* series_name, tsedge_series_stats* out_stats);
+
+/**
+ * Deletes old data from a series at segment-file granularity.
+ *
+ * Only segment files whose maximum timestamp is strictly smaller than
+ * older_than_timestamp are removed. Segments that partially overlap the
+ * boundary are kept whole; exact deletion inside a segment would require
+ * compaction and is not implemented in this prototype.
+ *
+ * Returns TSEDGE_OK on success or a negative error code on failure.
+ */
+int tsedge_delete_before(tsedge_db* db, const char* series_name, int64_t older_than_timestamp);
 
 /**
  * Reads points from an inclusive timestamp range.

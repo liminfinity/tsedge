@@ -411,23 +411,40 @@ bench/tsedge_bench
 ├── include
 │   └── tsedge.h
 ├── src
-│   ├── tsedge.c
-│   ├── db.c
-│   ├── db.h
-│   ├── series.c
-│   ├── series.h
-│   ├── wal.c
-│   ├── wal.h
-│   ├── block.c
-│   ├── block.h
-│   ├── compress.c
-│   ├── compress.h
-│   ├── bitstream.c
-│   ├── bitstream.h
-│   ├── segment.c
-│   ├── segment.h
-│   ├── csv.c
-│   └── csv.h
+│   ├── api
+│   │   └── tsedge.c
+│   ├── core
+│   │   ├── db.c
+│   │   ├── db.h
+│   │   ├── series.c
+│   │   ├── series.h
+│   │   ├── series_index.c
+│   │   ├── series_index.h
+│   │   ├── series_query.c
+│   │   ├── series_query.h
+│   │   ├── series_stats.c
+│   │   ├── series_stats.h
+│   │   ├── series_retention.c
+│   │   └── series_retention.h
+│   ├── storage
+│   │   ├── block.c
+│   │   ├── block.h
+│   │   ├── segment.c
+│   │   ├── segment.h
+│   │   ├── segment_files.c
+│   │   ├── segment_files.h
+│   │   ├── segment_rotation.c
+│   │   ├── segment_rotation.h
+│   │   ├── wal.c
+│   │   └── wal.h
+│   ├── compression
+│   │   ├── bitstream.c
+│   │   ├── bitstream.h
+│   │   ├── compress.c
+│   │   └── compress.h
+│   └── export
+│       ├── csv.c
+│       └── csv.h
 ├── examples
 │   └── tsedge_demo.c
 ├── tests
@@ -438,6 +455,12 @@ bench/tsedge_bench
 └── bench
     └── tsedge_bench.c
 ```
+
+New internal modules should be placed in the appropriate layer. The public API
+is changed only through `include/tsedge.h`; storage logic must not move into
+`src/api`; compression must not depend on database or series modules; WAL must
+not depend on CSV, query code, or the public facade. Before finishing changes,
+run build, tests, demo, and benchmark.
 
 ## Testing requirements
 

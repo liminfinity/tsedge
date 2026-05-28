@@ -41,11 +41,15 @@ Useful benchmark metrics include:
 - `size_bytes`
 - `raw_size_bytes`
 - `compression_ratio`
-- Optional scan counters such as `block_count`, `decoded_block_count`, and
+- `segment_count`
+- `block_count`
+- `total_segment_size_bytes`
+- Optional scan counters such as `decoded_block_count` and
   `skipped_block_count` may be added later; notebooks tolerate their absence.
 
 The current benchmark output includes throughput, aggregate time, database size,
-raw binary size, and compression ratio.
+raw binary size, compression ratio, number of segment files, number of persisted
+blocks, and total segment-file bytes.
 
 ## Running
 
@@ -80,6 +84,15 @@ Each benchmark can also write a machine-readable CSV result file:
 `system=tsedge` for both modes and compares `batch_size=1` using
 `tsedge_append` with batch sizes `100`, `1000`, and `4096` using
 `tsedge_append_batch`.
+
+With the default 64 MiB segment limit, small benchmark databases may still fit
+into one segment. To demonstrate rotation with a small point count, configure a
+separate build with a smaller limit:
+
+```bash
+cmake -DTSEDGE_SEGMENT_MAX_BYTES=8192 ..
+cmake --build .
+```
 
 From the repository root, the helper script writes the expected notebook input
 files into `benchmark_results/`:
@@ -116,6 +129,9 @@ read_points_per_sec=...
 db_size_bytes=...
 raw_size_bytes=16000000
 compression_ratio=...
+segment_count=...
+block_count=...
+total_segment_size_bytes=...
 ```
 
 Always record the device, compiler, build type, storage medium, operating

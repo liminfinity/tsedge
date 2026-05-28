@@ -53,6 +53,7 @@ int tsedge_compress_timestamps(const tsedge_point* points, size_t count, uint8_t
     /*
      * Timestamp compression is lossless and streaming-friendly: store a base
      * timestamp, then encode how the interval between timestamps changes.
+     * Zigzag keeps small negative and positive delta-of-delta values compact.
      */
     size_t size = 8;
     if (count >= 2) {
@@ -148,9 +149,9 @@ int tsedge_compress_values(const tsedge_point* points, size_t count, uint8_t** o
 
     /*
      * This Gorilla-inspired scheme stores the first double as raw bits and then
-     * stores XOR differences from the previous value. Non-zero XOR values use a
-     * byte-aligned significant-window encoding when it saves space, otherwise a
-     * raw XOR fallback keeps the worst case bounded. The roundtrip is exact.
+     * stores XOR differences from the previous value. XOR preserves the exact
+     * IEEE-754 bit pattern, so compression is lossless even for signed zero and
+     * unusual payload bits.
      */
     size_t size = 8;
     uint64_t prev = double_to_bits(points[0].value);

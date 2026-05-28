@@ -89,16 +89,29 @@ Series statistics can be read without decoding segment payloads:
 ```c
 tsedge_series_stats stats;
 if (tsedge_get_series_stats(db, "motor.temperature", &stats) == TSEDGE_OK) {
-    printf("blocks=%zu buffered=%zu indexed=%zu segment_bytes=%llu\n",
+    printf("segments=%zu active=%u blocks=%zu buffered=%zu indexed=%zu bytes=%llu\n",
+           stats.segment_count,
+           stats.active_segment_id,
            stats.block_count,
            stats.buffered_points,
            stats.total_indexed_points,
-           (unsigned long long)stats.segment_size_bytes);
+           (unsigned long long)stats.total_segment_size_bytes);
 }
 ```
 
 The statistics are collected from the in-memory block index, the current buffer
-and the segment file size.
+and all segment file sizes.
+
+Old data can be removed at segment-file granularity:
+
+```c
+tsedge_delete_before(db, "motor.temperature", 1710001000000LL);
+```
+
+The function deletes only `segment_*.tse` files whose maximum timestamp is older
+than the threshold. If a segment contains both old and new points, it is kept
+unchanged because this prototype does not implement compaction or point-level
+deletion.
 
 ## Storage Layout
 
@@ -112,12 +125,16 @@ database_dir/
     motor.temperature/
       metadata.txt
       segment_000001.tse
+      segment_000002.tse
+      segment_000003.tse
 ```
 
-`manifest.txt` lists known series. Each series has one append-only segment file
-in this prototype. `wal.log` stores not-yet-flushed points for crash recovery.
-After a successful block flush, the WAL is rewritten from current in-memory
-buffers so already persisted blocks are not replayed twice.
+`manifest.txt` lists known series. Each series stores immutable compressed
+blocks in append-only `segment_%06u.tse` files. The active segment rotates at a
+block boundary when it reaches the internal size limit, which is 64 MiB by
+default. `wal.log` stores not-yet-flushed points for crash recovery. After a
+successful block flush, the WAL is rewritten from current in-memory buffers so
+already persisted blocks are not replayed twice.
 
 ## Segment Format
 
@@ -147,7 +164,47 @@ The min/max timestamp metadata allows range queries to skip blocks that do not
 intersect the requested interval. The value statistics allow aggregate queries
 to use fully covered blocks without decompressing them.
 
+When a database is opened, TSEdge discovers all `segment_*.tse` files for every
+series and rebuilds one in-memory block index. Each index entry stores the
+segment id and offset of a block, so range reads and aggregates can cross segment
+file boundaries without changing the public API.
+
 More storage format details are in [docs/storage_format.md](docs/storage_format.md).
+
+## Module Architecture
+
+TSEdge is split into small internal layers:
+
+- `src/api` contains the public facade: it validates public arguments, finds a
+  series, and delegates to internal modules.
+- `src/core` owns database and series coordination, including block index
+  rebuild, range/aggregate queries, lightweight stats and retention.
+- `src/storage` owns segment files, segment rotation, block metadata and WAL.
+- `src/compression` owns timestamp/value compression and primitive byte
+  encoding.
+- `src/export` owns CSV export.
+
+The demo program shows the main API flow: it creates three series, writes data
+with both `tsedge_append` and `tsedge_append_batch`, reads a range, computes
+aggregates, prints stats, applies segment-level retention, exports CSV, closes
+the database, reopens it, and checks that the rebuilt segment index still
+exposes the remaining data.
+
+## Deleting Old Data
+
+`tsedge_delete_before` implements a simple retention policy on top of segment
+rotation. Before deleting files, TSEdge flushes the current in-memory buffer so
+the WAL and segment files describe the same accepted points. It then computes
+the timestamp range of each segment from the in-memory block index and removes
+only segments whose `segment_max_timestamp < older_than_timestamp`.
+
+Partially overlapping segments are preserved completely. Remaining segment files
+are not renamed, so after deleting `segment_000001.tse` and
+`segment_000002.tse`, later files such as `segment_000003.tse` keep their names
+and future rotation continues from the highest existing segment id. After
+deletion, the block index is rebuilt from the segment files that are still on
+disk. Precise deletion inside a segment would require compaction and is not
+implemented in this prototype.
 
 ## Compression
 
@@ -178,6 +235,8 @@ explainability over maximum compression ratio.
 - Optional WAL `fsync` mode through `TSEDGE_WAL_FSYNC`.
 - Block-level aggregate statistics for fully covered blocks.
 - In-memory block index rebuilt from segment headers at open.
+- Segment rotation at block boundaries with `segment_%06u.tse` files.
+- Segment-level retention with `tsedge_delete_before`.
 - Byte-aligned Gorilla-inspired value XOR encoding with raw fallback.
 
 Planned future optimizations are documented as limitations below where they are
@@ -191,7 +250,8 @@ larger than a safe incremental change.
 - No full ACID transaction system.
 - No production-grade WAL checkpointing.
 - No disk-based B+Tree index.
-- No segment rotation yet; each series currently uses `segment_000001.tse`.
+- No point-level deletion, compaction, or retention inside partially overlapping
+  segment files.
 - The in-memory block index is rebuilt on open and is not persisted separately.
 - The value compression remains a simplified Gorilla-inspired XOR stream, not full
   Gorilla bit-packing.
@@ -221,4 +281,7 @@ aggregate_seconds=...
 db_size_bytes=...
 raw_size_bytes=16000000
 compression_ratio=...
+segment_count=...
+block_count=...
+total_segment_size_bytes=...
 ```

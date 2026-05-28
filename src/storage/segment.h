@@ -21,11 +21,13 @@ typedef struct {
  */
 int tsedge_segment_append_block(
     const char* segment_path,
+    uint32_t segment_id,
     const tsedge_point* points,
     size_t count,
     tsedge_block_index_entry* out_index_entry
 );
-int tsedge_segment_scan_index(const char* segment_path, tsedge_block_index_entry** out_entries, size_t* out_count);
+int tsedge_segment_estimate_block_size(const tsedge_point* points, size_t count, uint64_t* out_size);
+int tsedge_segment_scan_index(const char* segment_path, uint32_t segment_id, tsedge_block_index_entry** out_entries, size_t* out_count);
 int tsedge_segment_read_range(
     const char* segment_path,
     int64_t from_timestamp,

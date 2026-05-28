@@ -2,6 +2,9 @@
 #include "csv.h"
 #include "db.h"
 #include "series.h"
+#include "series_query.h"
+#include "series_retention.h"
+#include "series_stats.h"
 
 int tsedge_open(const char* path, tsedge_db** out_db) {
     if (!path || !out_db) {
@@ -71,6 +74,21 @@ int tsedge_get_series_stats(tsedge_db* db, const char* series_name, tsedge_serie
         return TSEDGE_ERR_NOT_FOUND;
     }
     return tsedge_series_get_stats(series, out_stats);
+}
+
+int tsedge_delete_before(tsedge_db* db, const char* series_name, int64_t older_than_timestamp) {
+    if (!db) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_series_validate_name(series_name);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    tsedge_series* series = tsedge_db_find_series(db, series_name);
+    if (!series) {
+        return TSEDGE_ERR_NOT_FOUND;
+    }
+    return tsedge_series_delete_before(db, series, older_than_timestamp);
 }
 
 int tsedge_read_range(

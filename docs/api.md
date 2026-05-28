@@ -134,8 +134,8 @@ tsedge_append_batch(db, "motor.temperature", points, 3);
 ## `tsedge_get_series_stats`
 
 Returns lightweight statistics for an existing series. The function uses the
-in-memory block index, the current unflushed buffer and the segment file size.
-It does not decompress block payloads or scan all stored points.
+in-memory block index, the current unflushed buffer and segment file sizes. It
+does not decompress block payloads or scan all stored points.
 
 The output structure is:
 
@@ -144,10 +144,13 @@ typedef struct {
     size_t block_count;
     size_t buffered_points;
     size_t total_indexed_points;
+    size_t segment_count;
     int has_time_range;
     int64_t min_timestamp;
     int64_t max_timestamp;
+    uint32_t active_segment_id;
     uint64_t segment_size_bytes;
+    uint64_t total_segment_size_bytes;
 } tsedge_series_stats;
 ```
 
@@ -157,12 +160,15 @@ Fields:
   index.
 - `buffered_points`: number of points still kept in the memory buffer.
 - `total_indexed_points`: sum of `point_count` across indexed blocks.
+- `segment_count`: number of existing `segment_*.tse` files for the series.
 - `has_time_range`: `1` when the series has at least one point in blocks or
   buffer, otherwise `0`.
 - `min_timestamp` and `max_timestamp`: timestamp range across indexed blocks and
   buffered points when `has_time_range` is `1`.
-- `segment_size_bytes`: size of `segment_000001.tse`; `0` when the segment file
-  does not exist yet.
+- `active_segment_id`: id used for the next block flush.
+- `segment_size_bytes`: total size of all segment files. This keeps older
+  callers useful after segment rotation.
+- `total_segment_size_bytes`: explicit total size of all segment files.
 
 Parameters:
 
@@ -182,13 +188,53 @@ Example:
 tsedge_series_stats stats;
 int rc = tsedge_get_series_stats(db, "motor.temperature", &stats);
 if (rc == TSEDGE_OK && stats.has_time_range) {
-    printf("blocks=%zu buffered=%zu range=%lld..%lld\n",
+    printf("segments=%zu active=%u blocks=%zu buffered=%zu range=%lld..%lld\n",
+           stats.segment_count,
+           stats.active_segment_id,
            stats.block_count,
            stats.buffered_points,
            (long long)stats.min_timestamp,
            (long long)stats.max_timestamp);
 }
 ```
+
+## `tsedge_delete_before`
+
+Deletes old data from a series at segment-file granularity. A segment is removed
+only when every block in that file is older than `older_than_timestamp`, meaning
+the segment maximum timestamp is less than the threshold. Segments that
+partially overlap the threshold are kept unchanged.
+
+Before deletion, TSEdge flushes the current in-memory buffer. This keeps the WAL
+consistent with the segment files and makes the retention decision based on
+durable block metadata. After deleting files, the in-memory block index is
+rebuilt from the remaining segment files.
+
+Parameters:
+
+- `db`: database handle.
+- `series_name`: existing series name.
+- `older_than_timestamp`: delete segments whose maximum timestamp is strictly
+  less than this value.
+
+Returns:
+
+- `TSEDGE_OK` on success, including when no segment matches the threshold.
+- `TSEDGE_ERR_NOT_FOUND` if the series does not exist.
+- Other error statuses for invalid arguments, flush failures, I/O failures or
+  corrupt segment data.
+
+Example:
+
+```c
+int rc = tsedge_delete_before(db, "motor.temperature", 1710001000000LL);
+if (rc != TSEDGE_OK) {
+    fprintf(stderr, "retention failed: %s\n", tsedge_strerror(rc));
+}
+```
+
+This function does not rewrite partially old segments. Exact deletion inside a
+segment requires compaction, which is not implemented in the current prototype.
 
 ## `tsedge_read_range`
 

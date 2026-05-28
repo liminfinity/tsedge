@@ -37,6 +37,19 @@ When enabled, each WAL append performs `fflush` and `fsync` where available.
 This can improve durability of acknowledged appends, but it may reduce write
 throughput in benchmarks.
 
+## Optional Segment Limit Override
+
+The default segment rotation limit is 64 MiB. For tests or demonstrations that
+need visible rotation with small datasets, override it at configure time:
+
+```bash
+cmake -DTSEDGE_SEGMENT_MAX_BYTES=8192 ..
+cmake --build .
+```
+
+Rotation still happens only between blocks. A block is never split across
+segment files.
+
 ## Run Demo
 
 From the build directory:
@@ -45,8 +58,10 @@ From the build directory:
 ./tsedge_demo
 ```
 
-The demo creates `demo_db/`, appends sample points, computes an average, and
-exports `temperature.csv`.
+The demo recreates `demo_db/`, creates several series, writes single-point and
+batch data, reads a range, computes aggregates, prints stats, exports
+`temperature.csv`, closes the database, and reopens it to check recovery of the
+in-memory segment index.
 
 ## Run Benchmark
 

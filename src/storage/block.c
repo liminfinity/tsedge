@@ -13,7 +13,6 @@
  */
 #define TSEDGE_BLOCK_MAGIC 0x42455354u
 #define TSEDGE_BLOCK_VERSION 2u
-#define TSEDGE_BLOCK_HEADER_SIZE 72u
 
 static uint64_t double_to_bits(double value) {
     uint64_t bits = 0;
@@ -94,7 +93,9 @@ int tsedge_block_read_header(FILE* f, tsedge_block_header* header, bool* eof) {
 
     /*
      * The payload is trusted only if metadata is internally consistent. Segment
-     * scans use payload_size to skip non-overlapping blocks without decoding.
+     * scans use timestamp bounds and payload_size to skip irrelevant blocks,
+     * while aggregate queries can use stored value stats for fully covered
+     * blocks.
      */
     uint64_t expected_payload_size = (uint64_t)header->timestamp_size + (uint64_t)header->value_size;
     if (header->point_count == 0 ||
