@@ -190,6 +190,44 @@ aggregates, prints stats, applies segment-level retention, exports CSV, closes
 the database, reopens it, and checks that the rebuilt segment index still
 exposes the remaining data.
 
+## Панель метеопоста и диагностика TSEdge
+
+Интерактивная демонстрация показывает автономный экологический пост:
+
+```text
+C-agent -> TSEdge -> live_state.json -> Next.js simulator
+```
+
+C-agent пишет реальные точки в TSEdge через публичный API. Сайт не подключается
+к базе и не является сервером TSEdge. Он читает файлы состояния C-программы и
+пишет команды в `command.json`.
+
+Собрать и запустить агент:
+
+```bash
+mkdir build
+cd build
+cmake -DCMAKE_BUILD_TYPE=Release -DTSEDGE_SEGMENT_MAX_BYTES=8192 ..
+cmake --build .
+ctest --output-on-failure
+./tsedge_ecopost_agent --live --interval-ms 1000
+```
+
+Запустить сайт в другом терминале:
+
+```bash
+cd demo/system-simulator
+npm install
+TSEDGE_LIVE_OUTPUT=../../build/ecopost_live_output npm run dev
+```
+
+Открыть `http://localhost:3000`. Это пользовательская панель метеопоста:
+температура, влажность, давление, ветер, PM2.5, аккумулятор и состояние связи.
+
+Инженерная диагностика доступна на `http://localhost:3000/diagnostics`. Она
+показывает WAL, буфер, сжатые blocks, segment-файлы, очистку старых данных и
+выгрузку CSV.
+
 ## Deleting Old Data
 
 `tsedge_delete_before` implements a simple retention policy on top of segment

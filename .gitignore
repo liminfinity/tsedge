@@ -27,6 +27,8 @@ Testing/
 
 # Generated databases and benchmark outputs
 demo_db/
+ecopost_live_db/
+ecopost_live_output/
 bench_db/
 test_db/
 *_db/
@@ -66,5 +68,11 @@ Thumbs.db
 *.gcno
 *.gcov
 coverage/
-core
-core.*
+/core
+/core.*
+
+# Demo web applications
+demo/system-simulator/node_modules/
+demo/system-simulator/.next/
+demo/system-simulator/out/
+demo/system-simulator/.env.local

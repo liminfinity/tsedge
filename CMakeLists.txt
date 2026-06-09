@@ -65,6 +65,10 @@ set(TSEDGE_DEMO_SOURCES
     examples/tsedge_demo.c
 )
 
+set(TSEDGE_ECOPOST_AGENT_SOURCES
+    examples/tsedge_ecopost_agent.c
+)
+
 set(TSEDGE_BENCH_SOURCES
     bench/tsedge_bench.c
 )
@@ -170,6 +174,10 @@ add_executable(tsedge_demo ${TSEDGE_DEMO_SOURCES})
 target_link_libraries(tsedge_demo PRIVATE tsedge)
 tsedge_link_math(tsedge_demo)
 
+add_executable(tsedge_ecopost_agent ${TSEDGE_ECOPOST_AGENT_SOURCES})
+target_link_libraries(tsedge_ecopost_agent PRIVATE tsedge)
+tsedge_link_math(tsedge_ecopost_agent)
+
 add_executable(tsedge_bench ${TSEDGE_BENCH_SOURCES})
 target_link_libraries(tsedge_bench PRIVATE tsedge)
 tsedge_link_math(tsedge_bench)
@@ -203,7 +211,7 @@ install(TARGETS tsedge tsedge_static
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(TARGETS tsedge_demo tsedge_bench file_bench
+install(TARGETS tsedge_demo tsedge_ecopost_agent tsedge_bench file_bench
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
