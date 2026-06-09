@@ -280,3 +280,68 @@ int tsedge_wal_replay(tsedge_db* db) {
 
     return fclose(f) == 0 ? TSEDGE_OK : TSEDGE_ERR_IO;
 }
+
+int tsedge_wal_verify_file(const char* wal_path, size_t* out_entry_count) {
+    if (!wal_path || !out_entry_count) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    *out_entry_count = 0;
+
+    FILE* f = fopen(wal_path, "rb");
+    if (!f) {
+        return errno == ENOENT ? TSEDGE_OK : TSEDGE_ERR_IO;
+    }
+
+    for (;;) {
+        uint8_t prefix[12];
+        size_t n = fread(prefix, 1, sizeof(prefix), f);
+        if (n == 0 && feof(f)) {
+            break;
+        }
+        if (n != sizeof(prefix)) {
+            fclose(f);
+            return TSEDGE_ERR_CORRUPT;
+        }
+
+        uint32_t entry_size = tsedge_read_u32_le(prefix + 8);
+        if (entry_size < TSEDGE_WAL_MIN_ENTRY_SIZE || entry_size > 1024u * 1024u) {
+            fclose(f);
+            return TSEDGE_ERR_CORRUPT;
+        }
+
+        uint8_t* entry = (uint8_t*)malloc(entry_size);
+        if (!entry) {
+            fclose(f);
+            return TSEDGE_ERR_NO_MEMORY;
+        }
+        memcpy(entry, prefix, sizeof(prefix));
+        size_t remaining = entry_size - sizeof(prefix);
+        if (fread(entry + sizeof(prefix), 1, remaining, f) != remaining) {
+            free(entry);
+            fclose(f);
+            return TSEDGE_ERR_CORRUPT;
+        }
+
+        uint32_t magic = tsedge_read_u32_le(entry);
+        uint32_t version = tsedge_read_u32_le(entry + 4);
+        uint32_t stored_entry_size = tsedge_read_u32_le(entry + 8);
+        uint32_t name_len = tsedge_read_u32_le(entry + 12);
+        uint32_t expected_checksum = tsedge_read_u32_le(entry + entry_size - TSEDGE_WAL_CHECKSUM_SIZE);
+        uint32_t actual_checksum = fnv1a32(entry, entry_size - TSEDGE_WAL_CHECKSUM_SIZE);
+        int valid = magic == TSEDGE_WAL_MAGIC &&
+            version == TSEDGE_WAL_VERSION &&
+            stored_entry_size == entry_size &&
+            name_len > 0 &&
+            name_len <= TSEDGE_MAX_SERIES_NAME &&
+            entry_size == TSEDGE_WAL_FIXED_SIZE + (size_t)name_len + TSEDGE_WAL_CHECKSUM_SIZE &&
+            expected_checksum == actual_checksum;
+        free(entry);
+        if (!valid) {
+            fclose(f);
+            return TSEDGE_ERR_CORRUPT;
+        }
+        ++(*out_entry_count);
+    }
+
+    return fclose(f) == 0 ? TSEDGE_OK : TSEDGE_ERR_IO;
+}

@@ -1,62 +1,61 @@
 import type { LiveState } from "@/lib/schema";
-import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
+import { formatBytes, formatNumber } from "@/lib/format";
 
 export type LoadSample = {
   receivedAt: number;
   totalPoints: number;
-  bufferPercent: number;
+  bufferBytes: number;
   walEntries: number;
-  segmentCount: number;
-  blockCount: number;
+  diskBytes: number;
 };
 
 export function makeLoadSample(state: LiveState): LoadSample {
+  const bufferBytes = state.buffer.points * state.last_batch.point_count * 16;
   return {
     receivedAt: Date.now(),
     totalPoints: state.agent.total_points_written,
-    bufferPercent: Math.max(0, Math.min(100, state.buffer.percent)),
+    bufferBytes,
     walEntries: state.wal.entries_since_flush,
-    segmentCount: state.segments.length,
-    blockCount: state.segments.reduce((sum, segment) => sum + segment.blocks, 0)
+    diskBytes: state.storage.compressed_size_bytes
   };
 }
 
-export function LoadPanel({ state, history }: { state: LiveState; history: LoadSample[] }) {
+export function LoadPanel({ history }: { history: LoadSample[] }) {
   const last = history.at(-1);
   const prev = history.length > 1 ? history.at(-2) : undefined;
   const elapsedSeconds = last && prev ? Math.max(1, (last.receivedAt - prev.receivedAt) / 1000) : 1;
   const pointsPerSecond = last && prev ? Math.max(0, (last.totalPoints - prev.totalPoints) / elapsedSeconds) : 0;
-  const bufferBytes = state.buffer.points * state.last_batch.point_count * 16;
-  const blockCount = state.segments.reduce((sum, segment) => sum + segment.blocks, 0);
+  const speedHistory = history.map((sample, index) => {
+    if (index === 0) {
+      return 0;
+    }
+    const previous = history[index - 1];
+    const seconds = Math.max(1, (sample.receivedAt - previous.receivedAt) / 1000);
+    return Math.max(0, (sample.totalPoints - previous.totalPoints) / seconds);
+  });
 
   return (
-    <section className="panel rounded-xl p-5">
+    <section className="panel rounded-xl p-6">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold">Нагрузка</h2>
+        <div>
+          <h2 className="text-lg font-semibold">Нагрузка на устройство</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Как запись в TSEdge влияет на память, диск и очередь WAL.
+          </p>
+        </div>
+        <div className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+          {formatNumber(Math.round(pointsPerSecond))} точек/с
+        </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Скорость записи" value={`${formatNumber(Math.round(pointsPerSecond))} точек/с`} />
-        <Metric label="Буфер в памяти" value={formatBytes(bufferBytes)} />
-        <Metric label="Ждут записи на диск" value={formatNumber(state.wal.entries_since_flush)} />
-        <Metric label="Blocks / segments" value={`${formatNumber(blockCount)} / ${formatNumber(state.segments.length)}`} />
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MiniChart title="Память буфера" unit="RAM" values={history.map((sample) => sample.bufferBytes)} format={formatBytes} />
+        <MiniChart title="Очередь WAL" unit="записей" values={history.map((sample) => sample.walEntries)} format={(value) => formatNumber(Math.round(value))} />
+        <MiniChart title="Размер на диске" unit="segment-файлы" values={history.map((sample) => sample.diskBytes)} format={formatBytes} />
+        <MiniChart title="Скорость записи" unit="точек/с" values={speedHistory} format={(value) => formatNumber(Math.round(value))} />
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <MiniChart title="Буфер" unit="%" values={history.map((sample) => sample.bufferPercent)} format={(value) => formatPercent(value)} />
-        <MiniChart title="WAL" unit="записей" values={history.map((sample) => sample.walEntries)} format={(value) => formatNumber(Math.round(value))} />
-        <MiniChart title="Segment-файлы" unit="шт." values={history.map((sample) => sample.segmentCount)} format={(value) => formatNumber(Math.round(value))} />
-      </div>
     </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-slate-950">{value}</div>
-    </div>
   );
 }
 

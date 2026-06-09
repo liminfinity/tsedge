@@ -27,6 +27,7 @@ set(TSEDGE_PRIVATE_HEADERS
     src/core/series_query.h
     src/core/series_retention.h
     src/core/series_stats.h
+    src/core/verify.h
     src/export/csv.h
     src/storage/block.h
     src/storage/segment.h
@@ -45,6 +46,7 @@ set(TSEDGE_SOURCES
     src/core/series_query.c
     src/core/series_retention.c
     src/core/series_stats.c
+    src/core/verify.c
     src/export/csv.c
     src/storage/block.c
     src/storage/segment.c

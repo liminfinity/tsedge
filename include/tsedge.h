@@ -60,6 +60,8 @@ typedef struct {
  *
  * The values are collected from the in-memory block index, the not-yet-flushed
  * buffer, and segment file sizes. Payload blocks are not decompressed.
+ * Compression fields are estimates based on raw point size and actual segment
+ * bytes on disk.
  */
 typedef struct {
     size_t block_count;
@@ -72,7 +74,27 @@ typedef struct {
     uint32_t active_segment_id;
     uint64_t segment_size_bytes;
     uint64_t total_segment_size_bytes;
+    uint64_t raw_size_estimate_bytes;
+    uint64_t compressed_size_bytes;
+    double compression_ratio;
+    double bytes_per_point;
 } tsedge_series_stats;
+
+/**
+ * Integrity verification summary for one database directory.
+ *
+ * On corruption, first_error_path and first_error_message describe the first
+ * problem found. The function does not repair files.
+ */
+typedef struct {
+    size_t series_count;
+    size_t segment_count;
+    size_t block_count;
+    size_t wal_entry_count;
+    size_t error_count;
+    char first_error_path[256];
+    char first_error_message[256];
+} tsedge_verify_report;
 
 /**
  * Callback used by range reads.
@@ -133,6 +155,34 @@ int tsedge_append(tsedge_db* db, const char* series_name, int64_t timestamp, dou
  * Returns TSEDGE_OK on success or a negative error code on failure.
  */
 int tsedge_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count);
+
+/**
+ * Flushes buffered points of one series into a segment file.
+ *
+ * Calling this on an empty buffer is a no-op and returns TSEDGE_OK.
+ *
+ * Returns TSEDGE_OK on success or a negative error code on failure.
+ */
+int tsedge_flush(tsedge_db* db, const char* series_name);
+
+/**
+ * Flushes buffered points of all series in the database.
+ *
+ * Empty series buffers are ignored. After a successful flush, WAL contains only
+ * data that is still not present in segment files.
+ *
+ * Returns TSEDGE_OK on success or a negative error code on failure.
+ */
+int tsedge_flush_all(tsedge_db* db);
+
+/**
+ * Verifies database files without modifying them.
+ *
+ * The check walks manifest, series metadata, segment files, block headers and
+ * WAL entries. It returns TSEDGE_OK for a valid database and TSEDGE_ERR_CORRUPT
+ * when a structural problem is found.
+ */
+int tsedge_verify(const char* db_path, tsedge_verify_report* report);
 
 /**
  * Returns lightweight statistics for an existing series.

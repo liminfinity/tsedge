@@ -4,19 +4,22 @@ import type { LiveState } from "@/lib/schema";
 export function RetentionPanel({ state }: { state: LiveState }) {
   const deleted = state.retention.last_deleted ? humanDeleted(state.retention.last_deleted) : "нет";
   return (
-    <section className="panel rounded-xl p-5">
+    <section className="panel rounded-xl p-6">
       <div className="flex items-center gap-2">
         <Trash2 className="text-amber-700" size={19} />
-        <h2 className="text-base font-semibold">Очистка старых данных</h2>
+        <h2 className="text-lg font-semibold">Очистка старых данных</h2>
       </div>
-      <div className="mt-4 space-y-2 text-sm">
-        <Row label="Очистка" value={state.retention.enabled ? "включена" : "выключена"} />
-        <Row label="Последний запуск" value={state.retention.last_run ? "был" : "нет"} />
-        <Row label="Удалено файлов" value={String(state.retention.deleted_count)} />
-        <Row label="Удалено" value={deleted} />
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        Удаляются только старые segment-файлы целиком.
+      </p>
+      <div className="mt-5 space-y-3 text-sm">
+        <Row label="Состояние" value={state.retention.enabled ? "включена" : "выключена"} hint="Можно запускать очистку старой истории." />
+        <Row label="Последний запуск" value={state.retention.last_run ? "был" : "нет"} hint="Показывает, запускали ли очистку в этой сессии." />
+        <Row label="Удалено файлов" value={String(state.retention.deleted_count)} hint="Сколько segment-файлов удалено последним запуском." />
+        <Row label="Что удалено" value={deleted} hint="Если старых файлов нет, база ничего не удаляет." />
       </div>
       {state.retention.last_run && state.retention.deleted_count === 0 && (
-        <div className="mt-3 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-900">
+        <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
           Полных старых файлов нет.
         </div>
       )}
@@ -24,11 +27,14 @@ export function RetentionPanel({ state }: { state: LiveState }) {
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
-    <div className="flex min-w-0 justify-between gap-4 rounded-lg bg-slate-50 px-4 py-2">
-      <span className="shrink-0 text-slate-500">{label}</span>
-      <span className="min-w-0 truncate text-right font-medium">{value}</span>
+    <div className="rounded-lg bg-slate-50 px-4 py-3" title={hint}>
+      <div className="flex items-start justify-between gap-4">
+        <span className="text-slate-600">{label}</span>
+        <span className="text-right font-semibold text-slate-950">{value}</span>
+      </div>
+      <div className="mt-1 text-xs leading-5 text-slate-500">{hint}</div>
     </div>
   );
 }

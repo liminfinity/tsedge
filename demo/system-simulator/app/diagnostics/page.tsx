@@ -2,19 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
-import { BlockPanel } from "@/components/BlockPanel";
-import { BufferPanel } from "@/components/BufferPanel";
+import { CompressionPanel } from "@/components/CompressionPanel";
 import { ControlPanel } from "@/components/ControlPanel";
-import { CsvPanel } from "@/components/CsvPanel";
+import { DatabaseStatePanel } from "@/components/DatabaseStatePanel";
 import { EventLog } from "@/components/EventLog";
 import { LoadPanel, makeLoadSample } from "@/components/LoadPanel";
-import { RetentionPanel } from "@/components/RetentionPanel";
+import { MaintenancePanel } from "@/components/MaintenancePanel";
+import { OperationResultPanel } from "@/components/OperationResultPanel";
 import { SegmentShelf } from "@/components/SegmentShelf";
 import { StatusHeader } from "@/components/StatusHeader";
 import { StorageTree } from "@/components/StorageTree";
-import { SystemPipeline } from "@/components/SystemPipeline";
 import { ViewNav } from "@/components/ViewNav";
-import { WalPanel } from "@/components/WalPanel";
 import type { DemoCommand, LiveState } from "@/lib/schema";
 import type { LoadSample } from "@/components/LoadPanel";
 
@@ -131,15 +129,13 @@ export default function Page() {
           {error}. Последнее состояние оставлено на экране.
         </div>
       )}
-      <SystemPipeline state={state} />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-        <WalPanel state={state} />
-        <BufferPanel state={state} />
-        <BlockPanel state={state} />
-        <RetentionPanel state={state} />
-        <CsvPanel state={state} />
+      <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+        <DatabaseStatePanel state={state} />
+        <CompressionPanel state={state} />
+        <MaintenancePanel state={state} checking={pendingCommand === "verify_db"} />
       </div>
-      <LoadPanel state={state} history={loadHistory} />
+      <OperationResultPanel state={state} />
+      <LoadPanel history={loadHistory} />
       <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="space-y-4">
           <ControlPanel

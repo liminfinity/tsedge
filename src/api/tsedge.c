@@ -5,6 +5,7 @@
 #include "series_query.h"
 #include "series_retention.h"
 #include "series_stats.h"
+#include "verify.h"
 
 int tsedge_open(const char* path, tsedge_db** out_db) {
     if (!path || !out_db) {
@@ -59,6 +60,35 @@ int tsedge_append_batch(tsedge_db* db, const char* series_name, const tsedge_poi
         return TSEDGE_ERR_NOT_FOUND;
     }
     return tsedge_series_append_batch(db, series, points, count);
+}
+
+int tsedge_flush(tsedge_db* db, const char* series_name) {
+    if (!db) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_series_validate_name(series_name);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    tsedge_series* series = tsedge_db_find_series(db, series_name);
+    if (!series) {
+        return TSEDGE_ERR_NOT_FOUND;
+    }
+    return tsedge_series_flush(db, series, true);
+}
+
+int tsedge_flush_all(tsedge_db* db) {
+    if (!db) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    return tsedge_db_flush_all(db);
+}
+
+int tsedge_verify(const char* db_path, tsedge_verify_report* report) {
+    if (!db_path || !report) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    return tsedge_verify_internal(db_path, report);
 }
 
 int tsedge_get_series_stats(tsedge_db* db, const char* series_name, tsedge_series_stats* out_stats) {

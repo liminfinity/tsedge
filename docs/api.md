@@ -131,6 +131,102 @@ tsedge_point points[3] = {
 tsedge_append_batch(db, "motor.temperature", points, 3);
 ```
 
+## `tsedge_flush`
+
+Flushes buffered points of one series into a segment file. If the buffer is
+empty, the call succeeds and does nothing.
+
+The function uses the same internal block/segment write path as automatic
+flushes. After success, the block index and WAL are updated.
+
+Parameters:
+
+- `db`: database handle.
+- `series_name`: existing series name.
+
+Returns:
+
+- `TSEDGE_OK` on success, including an empty buffer.
+- `TSEDGE_ERR_NOT_FOUND` if the series does not exist.
+- Other error statuses for invalid arguments, rotation failures, I/O failures or
+  allocation failures.
+
+Example:
+
+```c
+tsedge_append(db, "motor.temperature", timestamp, value);
+tsedge_flush(db, "motor.temperature");
+tsedge_export_csv(db, "motor.temperature", from, to, "temperature.csv");
+```
+
+## `tsedge_flush_all`
+
+Flushes buffered points of all series in the database. Empty buffers are
+ignored. If one series fails to flush, the function returns that error.
+
+After a successful call, WAL contains only data that is still not present in
+segment files.
+
+Parameters:
+
+- `db`: database handle.
+
+Returns:
+
+- `TSEDGE_OK` on success.
+- Other error statuses for invalid arguments, rotation failures, I/O failures or
+  allocation failures.
+
+Example:
+
+```c
+tsedge_flush_all(db);
+```
+
+## `tsedge_verify`
+
+Checks the structure of a database directory without modifying files. The
+function verifies the root directory, `manifest.txt`, series metadata,
+`segment_*.tse` files, block headers, payload boundaries and WAL entries.
+
+The output structure is:
+
+```c
+typedef struct {
+    size_t series_count;
+    size_t segment_count;
+    size_t block_count;
+    size_t wal_entry_count;
+    size_t error_count;
+    char first_error_path[256];
+    char first_error_message[256];
+} tsedge_verify_report;
+```
+
+Parameters:
+
+- `db_path`: filesystem path to an existing TSEdge database directory.
+- `report`: receives counters and the first error, if any.
+
+Returns:
+
+- `TSEDGE_OK` when the database is structurally valid.
+- `TSEDGE_ERR_CORRUPT` when a corrupt file or invalid layout is found.
+- Other error statuses for invalid arguments, I/O failures or allocation
+  failures.
+
+Example:
+
+```c
+tsedge_verify_report report;
+int rc = tsedge_verify("demo_db", &report);
+if (rc == TSEDGE_OK) {
+    printf("database is valid\n");
+} else {
+    printf("database is corrupted: %s\n", report.first_error_message);
+}
+```
+
 ## `tsedge_get_series_stats`
 
 Returns lightweight statistics for an existing series. The function uses the
@@ -151,6 +247,10 @@ typedef struct {
     uint32_t active_segment_id;
     uint64_t segment_size_bytes;
     uint64_t total_segment_size_bytes;
+    uint64_t raw_size_estimate_bytes;
+    uint64_t compressed_size_bytes;
+    double compression_ratio;
+    double bytes_per_point;
 } tsedge_series_stats;
 ```
 
@@ -169,6 +269,13 @@ Fields:
 - `segment_size_bytes`: total size of all segment files. This keeps older
   callers useful after segment rotation.
 - `total_segment_size_bytes`: explicit total size of all segment files.
+- `raw_size_estimate_bytes`: estimated uncompressed size as
+  `point_count * sizeof(tsedge_point)`.
+- `compressed_size_bytes`: actual bytes occupied by the series segment files.
+- `compression_ratio`: `raw_size_estimate_bytes / compressed_size_bytes`, or
+  `0.0` when there are no segment bytes yet.
+- `bytes_per_point`: average segment bytes per point, or `0.0` for an empty
+  series.
 
 Parameters:
 

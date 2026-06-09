@@ -1,6 +1,26 @@
 "use client";
 
-import { Download, Pause, Play, Power, RefreshCcw, RotateCcw, ShieldCheck, Trash2, Wifi, WifiOff, CloudAlert } from "lucide-react";
+import {
+  Calculator,
+  CloudAlert,
+  Database,
+  Download,
+  Layers,
+  ListPlus,
+  Pause,
+  Play,
+  Plus,
+  Power,
+  RefreshCcw,
+  RotateCcw,
+  Save,
+  Search,
+  SearchCheck,
+  ShieldCheck,
+  Trash2,
+  Wifi,
+  WifiOff
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { DemoCommand, LiveState } from "@/lib/schema";
 
@@ -17,25 +37,49 @@ const groups: Array<{
     ]
   },
   {
-    title: "Сеть",
+    title: "Запись",
     actions: [
-      { command: "network_offline", label: "Потерять связь", icon: WifiOff, tone: "warn" },
-      { command: "network_online", label: "Восстановить связь", icon: Wifi }
+      { command: "append_one", label: "Добавить 1 точку", icon: Plus },
+      { command: "append_100", label: "Добавить 100", icon: ListPlus },
+      { command: "append_1000", label: "Добавить 1000", icon: Layers },
+      { command: "append_batch", label: "Batch-запись", icon: Database }
     ]
   },
   {
-    title: "Сценарии",
+    title: "Буфер",
     actions: [
-      { command: "simulate_pollution", label: "Всплеск PM2.5", icon: CloudAlert, tone: "warn" },
-      { command: "simulate_crash", label: "Сбой", icon: Power, tone: "danger" },
-      { command: "recover_from_wal", label: "Восстановить из WAL", icon: ShieldCheck }
+      { command: "flush_all", label: "Сбросить буфер", icon: Save }
     ]
   },
   {
-    title: "Обслуживание базы",
+    title: "Запросы",
+    actions: [
+      { command: "read_last_range", label: "Прочитать диапазон", icon: Search },
+      { command: "aggregate_avg", label: "AVG", icon: Calculator },
+      { command: "aggregate_min_max", label: "MIN/MAX", icon: Calculator }
+    ]
+  },
+  {
+    title: "Обслуживание",
     actions: [
       { command: "run_retention", label: "Очистить старые данные", icon: Trash2, tone: "warn" },
-      { command: "export_csv", label: "Выгрузить CSV", icon: Download }
+      { command: "export_csv", label: "Выгрузить CSV", icon: Download },
+      { command: "verify_db", label: "Проверить базу", icon: SearchCheck }
+    ]
+  },
+  {
+    title: "Сбой",
+    actions: [
+      { command: "simulate_crash", label: "Сбой", icon: Power, tone: "danger" },
+      { command: "recover_from_wal", label: "WAL replay", icon: ShieldCheck }
+    ]
+  },
+  {
+    title: "Связь и датчики",
+    actions: [
+      { command: "network_offline", label: "Потерять связь", icon: WifiOff, tone: "warn" },
+      { command: "network_online", label: "Восстановить связь", icon: Wifi },
+      { command: "simulate_pollution", label: "Всплеск PM2.5", icon: CloudAlert, tone: "warn" }
     ]
   }
 ];
@@ -75,8 +119,20 @@ export function ControlPanel({
     if (command === "simulate_crash") {
       return state.agent.status === "crashed";
     }
+    if (command === "append_one" || command === "append_100" || command === "append_1000" || command === "append_batch") {
+      return state.agent.status === "crashed";
+    }
+    if (command === "read_last_range" || command === "aggregate_avg" || command === "aggregate_min_max") {
+      return state.agent.total_points_written === 0;
+    }
+    if (command === "flush_all") {
+      return state.buffer.points === 0 || state.agent.status === "crashed";
+    }
     if (command === "export_csv") {
       return !state.network.online;
+    }
+    if (command === "verify_db") {
+      return !state.verify.available;
     }
     return false;
   };

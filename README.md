@@ -84,23 +84,52 @@ tsedge_append_batch(db, "motor.temperature", points, 3);
 If a batch append fails partway through, points accepted before the error may
 remain stored. TSEdge does not provide all-or-nothing batch transactions.
 
+Buffered points can be forced to disk before export or shutdown:
+
+```c
+tsedge_append(db, "motor.temperature", timestamp, value);
+tsedge_flush(db, "motor.temperature");
+tsedge_export_csv(db, "motor.temperature", from, to, "temperature.csv");
+```
+
+`tsedge_flush` writes one series buffer into a segment file.
+`tsedge_flush_all` does the same for every series. Empty buffers are not an
+error.
+
+Database files can be checked without modifying them:
+
+```c
+tsedge_verify_report report;
+int rc = tsedge_verify("demo_db", &report);
+if (rc != TSEDGE_OK) {
+    printf("corrupt database: %s\n", report.first_error_message);
+}
+```
+
+`tsedge_verify` checks the database directory, manifest, series metadata,
+segment files, block headers, payload bounds and WAL entries. It reports the
+first problem found but does not repair files.
+
 Series statistics can be read without decoding segment payloads:
 
 ```c
 tsedge_series_stats stats;
 if (tsedge_get_series_stats(db, "motor.temperature", &stats) == TSEDGE_OK) {
-    printf("segments=%zu active=%u blocks=%zu buffered=%zu indexed=%zu bytes=%llu\n",
+    printf("segments=%zu active=%u blocks=%zu buffered=%zu indexed=%zu bytes=%llu ratio=%.2fx\n",
            stats.segment_count,
            stats.active_segment_id,
            stats.block_count,
            stats.buffered_points,
            stats.total_indexed_points,
-           (unsigned long long)stats.total_segment_size_bytes);
+           (unsigned long long)stats.total_segment_size_bytes,
+           stats.compression_ratio);
 }
 ```
 
 The statistics are collected from the in-memory block index, the current buffer
-and all segment file sizes.
+and all segment file sizes. They also include compression stats: estimated raw
+size, bytes stored in segment files, compression ratio and average bytes per
+point.
 
 Old data can be removed at segment-file granularity:
 

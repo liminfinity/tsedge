@@ -20,4 +20,7 @@ int tsedge_wal_replay(tsedge_db* db);
 /* Rewrites WAL to contain only points that are still not persisted in blocks. */
 int tsedge_wal_truncate_to_buffers(tsedge_db* db);
 
+/* Strictly scans WAL entries and validates entry checksums for verification. */
+int tsedge_wal_verify_file(const char* wal_path, size_t* out_entry_count);
+
 #endif

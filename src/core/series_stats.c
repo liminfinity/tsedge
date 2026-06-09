@@ -55,5 +55,15 @@ int tsedge_series_get_stats(const tsedge_series* series, tsedge_series_stats* ou
         out_stats->total_segment_size_bytes += size;
     }
     out_stats->segment_size_bytes = out_stats->total_segment_size_bytes;
+    out_stats->compressed_size_bytes = out_stats->total_segment_size_bytes;
+
+    size_t total_points = out_stats->total_indexed_points + out_stats->buffered_points;
+    out_stats->raw_size_estimate_bytes = (uint64_t)total_points * (uint64_t)sizeof(tsedge_point);
+    out_stats->compression_ratio = out_stats->compressed_size_bytes > 0
+        ? (double)out_stats->raw_size_estimate_bytes / (double)out_stats->compressed_size_bytes
+        : 0.0;
+    out_stats->bytes_per_point = total_points > 0
+        ? (double)out_stats->compressed_size_bytes / (double)total_points
+        : 0.0;
     return TSEDGE_OK;
 }

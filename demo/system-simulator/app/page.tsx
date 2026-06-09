@@ -182,25 +182,15 @@ function StationDashboard({
         ))}
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <InfoPanel title="Воздух" value={airQuality(pm25)} tone={pm25 > 75 ? "bad" : pm25 > 35 ? "warn" : "good"} />
-          <InfoPanel title="Погода" value={weatherText(values)} tone="neutral" />
-          <InfoPanel title="Станция" value={stationText(state)} tone={state.agent.status === "crashed" ? "bad" : state.network.online ? "good" : "warn"} />
-        </div>
-        <StationState state={state} />
-      </section>
+      <SituationBar values={values} pm25={pm25} />
 
       <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
         <RecentEvents state={state} />
         <div className="panel rounded-2xl p-5">
-          <h2 className="text-lg font-semibold text-slate-950">Коротко</h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <Summary label="Точек записано" value={state.agent.total_points_written.toLocaleString("ru-RU")} />
-            <Summary label="Аккумулятор" value={`${battery.toFixed(2)} В`} tone={battery < 3.4 ? "bad" : battery < 3.65 ? "warn" : "good"} />
-            <Summary label="PM2.5" value={`${pm25.toFixed(1)} мкг/м³`} tone={pm25 > 75 ? "bad" : pm25 > 35 ? "warn" : "good"} />
-            <Summary label="Последняя выгрузка" value={state.export.csv_ready ? "CSV готов" : state.network.online ? "Можно выгрузить" : "Ждёт связи"} />
-          </div>
+          <h2 className="text-lg font-semibold text-slate-950">Выгрузка данных</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            CSV нужен, чтобы забрать накопленные данные станции.
+          </p>
           <ExportCsvAction
             state={state}
             pending={pendingCommand === "export_csv"}
@@ -211,6 +201,55 @@ function StationDashboard({
         </div>
       </section>
     </main>
+  );
+}
+
+function SituationBar({
+  values,
+  pm25
+}: {
+  values: Record<string, number>;
+  pm25: number;
+}) {
+  return (
+    <section className="panel rounded-2xl p-4">
+      <div className="grid gap-3 md:grid-cols-2">
+        <CompactStatus
+          label="Воздух"
+          value={airQuality(pm25)}
+          detail={`${pm25.toFixed(1)} мкг/м³ PM2.5`}
+          tone={pm25 > 75 ? "bad" : pm25 > 35 ? "warn" : "good"}
+        />
+        <CompactStatus
+          label="Погода"
+          value={weatherText(values)}
+          detail={`${(values["wind.speed"] ?? 0).toFixed(1)} м/с, ${(values["air.temperature"] ?? 0).toFixed(1)} °C`}
+          tone="neutral"
+        />
+      </div>
+    </section>
+  );
+}
+
+function CompactStatus({
+  label,
+  value,
+  detail,
+  tone
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone: Tone;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-xl bg-white px-4 py-3">
+      <div>
+        <div className="text-sm text-slate-500">{label}</div>
+        <div className={`mt-1 text-lg font-semibold ${toneClass(tone)}`}>{value}</div>
+      </div>
+      <div className="max-w-[45%] text-right text-sm leading-5 text-slate-500">{detail}</div>
+    </div>
   );
 }
 
@@ -353,29 +392,6 @@ function Sparkline({ values, tone }: { values: number[]; tone: Tone }) {
   );
 }
 
-function InfoPanel({ title, value, tone }: { title: string; value: string; tone: Tone }) {
-  return (
-    <div className="panel rounded-2xl p-5">
-      <div className="text-sm text-slate-500">{title}</div>
-      <div className={`mt-2 text-xl font-semibold ${toneClass(tone)}`}>{value}</div>
-    </div>
-  );
-}
-
-function StationState({ state }: { state: LiveState }) {
-  return (
-    <section className="panel rounded-2xl p-5">
-      <h2 className="text-lg font-semibold text-slate-950">Состояние станции</h2>
-      <div className="mt-4 grid gap-2 text-sm">
-        <Row label="Датчики" value={state.agent.status === "crashed" ? "остановлены" : "активны"} />
-        <Row label="Локальное хранение" value="активно" />
-        <Row label="Связь" value={state.network.online ? "есть" : "нет"} />
-        <Row label="Передача данных" value={state.export.csv_ready ? "CSV готов" : state.network.online ? "готова" : "ждёт связи"} />
-      </div>
-    </section>
-  );
-}
-
 function RecentEvents({ state }: { state: LiveState }) {
   const events = state.events
     .filter((event) => ["append", "network", "pollution", "recovery", "export", "error"].includes(event.type))
@@ -395,24 +411,6 @@ function RecentEvents({ state }: { state: LiveState }) {
         {events.length === 0 && <div className="text-sm text-slate-500">Событий пока нет.</div>}
       </div>
     </section>
-  );
-}
-
-function Summary({ label, value, tone = "neutral" }: { label: string; value: string; tone?: Tone }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-      <div className="text-sm text-slate-500">{label}</div>
-      <div className={`mt-1 text-lg font-semibold ${toneClass(tone)}`}>{value}</div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-4 rounded-lg bg-slate-50 px-4 py-2">
-      <span className="text-slate-500">{label}</span>
-      <span className="font-medium text-slate-950">{value}</span>
-    </div>
   );
 }
 
@@ -452,16 +450,6 @@ function weatherText(values: Record<string, number>) {
     return "Холодно";
   }
   return "Спокойно";
-}
-
-function stationText(state: LiveState) {
-  if (state.agent.status === "crashed") {
-    return "Требуется восстановление";
-  }
-  if (!state.network.online) {
-    return "Работает локально";
-  }
-  return "Штатно";
 }
 
 function stationEventText(message: string) {

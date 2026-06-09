@@ -7,8 +7,17 @@ export const commandSchema = z.object({
     "simulate_pollution",
     "simulate_crash",
     "recover_from_wal",
+    "append_one",
+    "append_100",
+    "append_1000",
+    "append_batch",
+    "flush_all",
+    "read_last_range",
+    "aggregate_avg",
+    "aggregate_min_max",
     "run_retention",
     "export_csv",
+    "verify_db",
     "reset_demo",
     "pause",
     "resume"
@@ -62,6 +71,19 @@ export const liveStateSchema = z.object({
     last_block_created: z.boolean(),
     algorithm: z.string()
   }),
+  storage: z
+    .object({
+      raw_size_estimate_bytes: z.number(),
+      compressed_size_bytes: z.number(),
+      compression_ratio: z.number(),
+      bytes_per_point: z.number()
+    })
+    .default({
+      raw_size_estimate_bytes: 0,
+      compressed_size_bytes: 0,
+      compression_ratio: 0,
+      bytes_per_point: 0
+    }),
   segments: z.array(
     z.object({
       name: z.string(),
@@ -86,6 +108,71 @@ export const liveStateSchema = z.object({
     csv_ready: z.boolean(),
     last_file: z.string().nullable()
   }),
+  last_command: z
+    .object({
+      name: z.string().nullable(),
+      status: z.string(),
+      message: z.string(),
+      affected_points: z.number(),
+      timestamp: z.number()
+    })
+    .default({
+      name: null,
+      status: "not_run",
+      message: "",
+      affected_points: 0,
+      timestamp: 0
+    }),
+  last_query: z
+    .object({
+      type: z.string().nullable(),
+      series: z.string().nullable(),
+      status: z.string(),
+      from: z.number(),
+      to: z.number(),
+      points_read: z.number(),
+      result: z.number(),
+      min: z.number(),
+      max: z.number(),
+      duration_ms: z.number()
+    })
+    .default({
+      type: null,
+      series: null,
+      status: "not_run",
+      from: 0,
+      to: 0,
+      points_read: 0,
+      result: 0,
+      min: 0,
+      max: 0,
+      duration_ms: 0
+    }),
+  verify: z
+    .object({
+      last_run: z.boolean(),
+      available: z.boolean().default(true),
+      ok: z.boolean(),
+      series_count: z.number(),
+      segment_count: z.number(),
+      block_count: z.number(),
+      wal_entry_count: z.number(),
+      error_count: z.number(),
+      first_error_path: z.string().nullable(),
+      first_error_message: z.string().nullable()
+    })
+    .default({
+      last_run: false,
+      available: true,
+      ok: false,
+      series_count: 0,
+      segment_count: 0,
+      block_count: 0,
+      wal_entry_count: 0,
+      error_count: 0,
+      first_error_path: null,
+      first_error_message: null
+    }),
   events: z.array(
     z.object({
       time: z.string(),

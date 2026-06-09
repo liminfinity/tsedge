@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 extern int tsedge_test_failures;
@@ -50,6 +51,24 @@ static int count_cb(const tsedge_point* point, void* user_data) {
     size_t* count = (size_t*)user_data;
     ++(*count);
     return 0;
+}
+
+static size_t count_csv_data_rows(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        return 0;
+    }
+    char buf[256];
+    size_t rows = 0;
+    if (!fgets(buf, sizeof(buf), f)) {
+        fclose(f);
+        return 0;
+    }
+    while (fgets(buf, sizeof(buf), f)) {
+        ++rows;
+    }
+    fclose(f);
+    return rows;
 }
 
 static void rm_rf(const char* path) {
@@ -238,6 +257,226 @@ void test_append_batch_multiple_blocks(void) {
     rm_rf(path);
 }
 
+void test_flush_single_series(void) {
+    const char* path = temp_path("flush_single");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+
+    CHECK_OK(tsedge_append(db, "s", 100, 1.0));
+    CHECK_OK(tsedge_append(db, "s", 200, 2.0));
+    CHECK_OK(tsedge_append(db, "s", 300, 3.0));
+
+    tsedge_series_stats stats;
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.buffered_points == 3);
+    CHECK(stats.block_count == 0);
+
+    CHECK_OK(tsedge_flush(db, "s"));
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.buffered_points == 0);
+    CHECK(stats.block_count > 0);
+    CHECK(stats.total_indexed_points == 3);
+    CHECK(stats.segment_count == 1);
+
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "s", 0, 400, collect_cb, &vec));
+    CHECK(vec.count == 3);
+    CHECK(vec.points[0].timestamp == 100);
+    CHECK(vec.points[2].timestamp == 300);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_flush_empty_buffer(void) {
+    const char* path = temp_path("flush_empty");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_flush(db, "s"));
+
+    tsedge_series_stats stats;
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.buffered_points == 0);
+    CHECK(stats.block_count == 0);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_flush_all(void) {
+    const char* path = temp_path("flush_all");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "a"));
+    CHECK_OK(tsedge_create_series(db, "b"));
+
+    CHECK_OK(tsedge_append(db, "a", 1, 10.0));
+    CHECK_OK(tsedge_append(db, "a", 2, 20.0));
+    CHECK_OK(tsedge_append(db, "b", 1, 30.0));
+    CHECK_OK(tsedge_append(db, "b", 2, 40.0));
+    CHECK_OK(tsedge_flush_all(db));
+
+    tsedge_series_stats stats;
+    CHECK_OK(tsedge_get_series_stats(db, "a", &stats));
+    CHECK(stats.buffered_points == 0);
+    CHECK(stats.total_indexed_points == 2);
+    CHECK_OK(tsedge_get_series_stats(db, "b", &stats));
+    CHECK(stats.buffered_points == 0);
+    CHECK(stats.total_indexed_points == 2);
+
+    size_t read_count = 0;
+    CHECK_OK(tsedge_read_range(db, "a", 0, 10, count_cb, &read_count));
+    CHECK(read_count == 2);
+    read_count = 0;
+    CHECK_OK(tsedge_read_range(db, "b", 0, 10, count_cb, &read_count));
+    CHECK(read_count == 2);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_flush_invalid_args(void) {
+    const char* path = temp_path("flush_invalid");
+    tsedge_db* db = NULL;
+    CHECK(tsedge_flush(NULL, "x") == TSEDGE_ERR_INVALID_ARGUMENT);
+    CHECK(tsedge_flush_all(NULL) == TSEDGE_ERR_INVALID_ARGUMENT);
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK(tsedge_flush(db, NULL) == TSEDGE_ERR_INVALID_ARGUMENT);
+    CHECK(tsedge_flush(db, "") == TSEDGE_ERR_INVALID_ARGUMENT);
+    CHECK(tsedge_flush(db, "missing") == TSEDGE_ERR_NOT_FOUND);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_flush_before_export_csv(void) {
+    const char* path = temp_path("flush_export");
+    char csv_path[512];
+    snprintf(csv_path, sizeof(csv_path), "%s/out.csv", path);
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+
+    CHECK_OK(tsedge_append(db, "s", 10, 1.0));
+    CHECK_OK(tsedge_append(db, "s", 20, 2.0));
+    CHECK_OK(tsedge_append(db, "s", 30, 3.0));
+    CHECK_OK(tsedge_flush(db, "s"));
+    CHECK_OK(tsedge_export_csv(db, "s", 0, 100, csv_path));
+    CHECK(count_csv_data_rows(csv_path) == 3);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_verify_valid_database(void) {
+    const char* path = temp_path("verify_valid");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    for (int i = 0; i < 16; ++i) {
+        CHECK_OK(tsedge_append(db, "s", 1000 + i, (double)i));
+    }
+    CHECK_OK(tsedge_flush_all(db));
+
+    tsedge_verify_report report;
+    CHECK_OK(tsedge_verify(path, &report));
+    CHECK(report.error_count == 0);
+    CHECK(report.series_count >= 1);
+    CHECK(report.segment_count >= 1);
+    CHECK(report.block_count >= 1);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_verify_empty_database(void) {
+    const char* path = temp_path("verify_empty");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+
+    tsedge_verify_report report;
+    CHECK_OK(tsedge_verify(path, &report));
+    CHECK(report.error_count == 0);
+    CHECK(report.series_count == 0);
+    CHECK(report.segment_count == 0);
+    CHECK(report.block_count == 0);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_verify_missing_metadata(void) {
+    const char* path = temp_path("verify_missing_metadata");
+    char metadata_path[512];
+    make_series_file_path(metadata_path, sizeof(metadata_path), path, "s", "metadata.txt");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK(unlink(metadata_path) == 0);
+
+    tsedge_verify_report report;
+    CHECK(tsedge_verify(path, &report) == TSEDGE_ERR_CORRUPT);
+    CHECK(report.error_count > 0);
+    CHECK(strstr(report.first_error_path, "metadata.txt") != NULL);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_verify_invalid_segment_filename(void) {
+    const char* path = temp_path("verify_bad_segment_name");
+    char bad_path[512];
+    make_series_file_path(bad_path, sizeof(bad_path), path, "s", "bad_segment.tse");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    FILE* f = fopen(bad_path, "wb");
+    CHECK(f != NULL);
+    CHECK(fclose(f) == 0);
+
+    tsedge_verify_report report;
+    CHECK(tsedge_verify(path, &report) == TSEDGE_ERR_CORRUPT);
+    CHECK(report.error_count > 0);
+    CHECK(strstr(report.first_error_message, "invalid segment filename") != NULL);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_verify_truncated_segment(void) {
+    const char* path = temp_path("verify_truncated_segment");
+    char segment_path[512];
+    make_series_file_path(segment_path, sizeof(segment_path), path, "s", "segment_000001.tse");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    for (int i = 0; i < 16; ++i) {
+        CHECK_OK(tsedge_append(db, "s", 1000 + i, (double)i));
+    }
+    CHECK_OK(tsedge_flush_all(db));
+
+    struct stat st;
+    CHECK(stat(segment_path, &st) == 0);
+    CHECK(st.st_size > 8);
+    CHECK(truncate(segment_path, st.st_size - 8) == 0);
+
+    tsedge_verify_report report;
+    CHECK(tsedge_verify(path, &report) == TSEDGE_ERR_CORRUPT);
+    CHECK(report.error_count > 0);
+    CHECK(strstr(report.first_error_message, "payload") != NULL || strstr(report.first_error_message, "truncated") != NULL);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_verify_invalid_args(void) {
+    tsedge_verify_report report;
+    CHECK(tsedge_verify(NULL, &report) == TSEDGE_ERR_INVALID_ARGUMENT);
+    CHECK(tsedge_verify("/tmp/tsedge_missing", NULL) == TSEDGE_ERR_INVALID_ARGUMENT);
+}
+
 void test_series_stats_empty_and_buffered(void) {
     const char* path = temp_path("stats_buffered");
     tsedge_db* db = NULL;
@@ -254,6 +493,10 @@ void test_series_stats_empty_and_buffered(void) {
     CHECK(stats.has_time_range == 0);
     CHECK(stats.segment_size_bytes == 0);
     CHECK(stats.total_segment_size_bytes == 0);
+    CHECK(stats.raw_size_estimate_bytes == 0);
+    CHECK(stats.compressed_size_bytes == 0);
+    CHECK(stats.compression_ratio == 0.0);
+    CHECK(stats.bytes_per_point == 0.0);
 
     CHECK_OK(tsedge_append(db, "s", 30, 3.0));
     CHECK_OK(tsedge_append(db, "s", 10, 1.0));
@@ -269,6 +512,10 @@ void test_series_stats_empty_and_buffered(void) {
     CHECK(stats.max_timestamp == 30);
     CHECK(stats.segment_size_bytes == 0);
     CHECK(stats.total_segment_size_bytes == 0);
+    CHECK(stats.raw_size_estimate_bytes == (uint64_t)stats.buffered_points * (uint64_t)sizeof(tsedge_point));
+    CHECK(stats.compressed_size_bytes == 0);
+    CHECK(stats.compression_ratio == 0.0);
+    CHECK(stats.bytes_per_point == 0.0);
 
     CHECK(tsedge_get_series_stats(db, "missing", &stats) == TSEDGE_ERR_NOT_FOUND);
     CHECK_OK(tsedge_close(db));
@@ -302,6 +549,10 @@ void test_series_stats_blocks_and_reopen(void) {
     CHECK(stats.max_timestamp == 1000 + (int64_t)count - 1);
     CHECK(stats.segment_size_bytes > 0);
     CHECK(stats.total_segment_size_bytes == stats.segment_size_bytes);
+    CHECK(stats.raw_size_estimate_bytes == (uint64_t)count * (uint64_t)sizeof(tsedge_point));
+    CHECK(stats.compressed_size_bytes == stats.total_segment_size_bytes);
+    CHECK(stats.compression_ratio > 0.0);
+    CHECK(stats.bytes_per_point > 0.0);
 
     CHECK_OK(tsedge_close(db));
     db = NULL;
@@ -317,6 +568,40 @@ void test_series_stats_blocks_and_reopen(void) {
     CHECK(stats.max_timestamp == 1000 + (int64_t)count - 1);
     CHECK(stats.segment_size_bytes > 0);
     CHECK(stats.total_segment_size_bytes == stats.segment_size_bytes);
+    CHECK(stats.raw_size_estimate_bytes == (uint64_t)count * (uint64_t)sizeof(tsedge_point));
+    CHECK(stats.compressed_size_bytes == stats.total_segment_size_bytes);
+    CHECK(stats.compression_ratio > 0.0);
+    CHECK(stats.bytes_per_point > 0.0);
+    CHECK_OK(tsedge_close(db));
+    free(points);
+    rm_rf(path);
+}
+
+void test_series_compression_stats(void) {
+    const char* path = temp_path("compression_stats");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "empty"));
+
+    tsedge_series_stats stats;
+    CHECK_OK(tsedge_get_series_stats(db, "empty", &stats));
+    CHECK(stats.raw_size_estimate_bytes == 0);
+    CHECK(stats.compressed_size_bytes == 0);
+    CHECK(stats.compression_ratio == 0.0);
+    CHECK(stats.bytes_per_point == 0.0);
+
+    CHECK_OK(tsedge_create_series(db, "s"));
+    size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS + 32u;
+    tsedge_point* points = make_linear_points(count, 5000);
+    CHECK(points != NULL);
+    CHECK_OK(tsedge_append_batch(db, "s", points, count));
+    CHECK_OK(tsedge_get_series_stats(db, "s", &stats));
+    CHECK(stats.raw_size_estimate_bytes == (uint64_t)count * (uint64_t)sizeof(tsedge_point));
+    CHECK(stats.compressed_size_bytes == stats.total_segment_size_bytes);
+    CHECK(stats.compressed_size_bytes > 0);
+    CHECK(stats.compression_ratio > 0.0);
+    CHECK(stats.bytes_per_point > 0.0);
+
     CHECK_OK(tsedge_close(db));
     free(points);
     rm_rf(path);
