@@ -23,6 +23,7 @@ struct tsedge_db {
     size_t series_capacity;
 };
 
+/* Allocates a filesystem path by joining two path components. */
 char* tsedge_path_join(const char* a, const char* b);
 
 /*
@@ -36,13 +37,23 @@ int tsedge_db_open_internal(const char* path, tsedge_db** out_db);
 
 /* Flushes all series before releasing the embedded database handle. */
 int tsedge_db_close_internal(tsedge_db* db);
+
+/* Creates or reuses a series record inside the opened database. */
 int tsedge_db_create_series_internal(tsedge_db* db, const char* name);
+
+/* Finds a loaded series by name without creating it. */
 tsedge_series* tsedge_db_find_series(tsedge_db* db, const char* name);
+
+/* Adds a series object to the in-memory registry and optionally creates files. */
 int tsedge_db_add_series_object(tsedge_db* db, const char* name, int create_dir);
 
 /* Flushes all in-memory buffers and leaves WAL containing only unflushed data. */
 int tsedge_db_flush_all(tsedge_db* db);
+
+/* Rewrites manifest.txt from the current in-memory series list. */
 int tsedge_db_rewrite_manifest(tsedge_db* db);
+
+/* Releases database-owned memory without touching on-disk files. */
 void tsedge_db_free_memory(tsedge_db* db);
 
 #endif

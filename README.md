@@ -59,6 +59,7 @@ The first version supports:
 
 - open/close database directory
 - create series
+- list existing series
 - append `(int64 timestamp, double value)` points
 - append batches of `tsedge_point` values
 - inspect lightweight per-series statistics
@@ -67,6 +68,24 @@ The first version supports:
 - export a range to CSV
 
 Function-level API notes are in [docs/api.md](docs/api.md).
+
+Applications can list known series without scanning database files manually:
+
+```c
+tsedge_series_info* series = NULL;
+size_t count = 0;
+
+int rc = tsedge_list_series(db, &series, &count);
+if (rc == TSEDGE_OK) {
+    for (size_t i = 0; i < count; ++i) {
+        printf("%s\n", series[i].name);
+    }
+    tsedge_free_series_list(series);
+}
+```
+
+The function returns a copied array owned by the caller. Empty databases return
+`count = 0` and `series = NULL`.
 
 Batch append avoids repeating public validation and series lookup for every
 point:
@@ -219,6 +238,21 @@ aggregates, prints stats, applies segment-level retention, exports CSV, closes
 the database, reopens it, and checks that the rebuilt segment index still
 exposes the remaining data.
 
+## Crash Recovery Demo
+
+The crash recovery demo uses two small programs. The first writes points and
+exits without `tsedge_close`; the second opens the database and checks that WAL
+replay restored the points.
+
+```bash
+rm -rf crash_recovery_demo_db
+./tsedge_crash_writer crash_recovery_demo_db || true
+./tsedge_recover_check crash_recovery_demo_db
+```
+
+The non-zero exit code from `tsedge_crash_writer` is expected: it intentionally
+simulates a crashed process.
+
 ## Панель метеопоста и диагностика TSEdge
 
 Интерактивная демонстрация показывает автономный экологический пост:
@@ -230,6 +264,10 @@ C-agent -> TSEdge -> live_state.json -> Next.js simulator
 C-agent пишет реальные точки в TSEdge через публичный API. Сайт не подключается
 к базе и не является сервером TSEdge. Он читает файлы состояния C-программы и
 пишет команды в `command.json`.
+
+Код demo-agent лежит в `examples/ecopost/` и разделён по ответственности:
+конфигурация, состояние, генерация датчиков, команды, операции с TSEdge,
+запись `live_state.json` и файловые helper-функции.
 
 Собрать и запустить агент:
 

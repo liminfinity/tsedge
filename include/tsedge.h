@@ -17,6 +17,10 @@ extern "C" {
  */
 typedef struct tsedge_db tsedge_db;
 
+#ifndef TSEDGE_MAX_SERIES_NAME
+#define TSEDGE_MAX_SERIES_NAME 255u
+#endif
+
 /**
  * Status codes returned by the public API.
  *
@@ -95,6 +99,20 @@ typedef struct {
     char first_error_path[256];
     char first_error_message[256];
 } tsedge_verify_report;
+
+/**
+ * One copied series entry returned by tsedge_list_series.
+ *
+ * The fields are derived from the loaded series registry and lightweight
+ * statistics. The caller owns the array, not the strings inside the database.
+ */
+typedef struct {
+    char name[TSEDGE_MAX_SERIES_NAME + 1u];
+    uint64_t total_points;
+    uint32_t segment_count;
+    uint32_t block_count;
+    uint64_t compressed_size_bytes;
+} tsedge_series_info;
 
 /**
  * Callback used by range reads.
@@ -183,6 +201,21 @@ int tsedge_flush_all(tsedge_db* db);
  * when a structural problem is found.
  */
 int tsedge_verify(const char* db_path, tsedge_verify_report* report);
+
+/**
+ * Returns a newly allocated copy of all series known by an open database.
+ *
+ * Empty databases return TSEDGE_OK with *out_series == NULL and *out_count == 0.
+ * The returned array must be released with tsedge_free_series_list.
+ */
+int tsedge_list_series(tsedge_db* db, tsedge_series_info** out_series, size_t* out_count);
+
+/**
+ * Releases a list allocated by tsedge_list_series.
+ *
+ * Passing NULL is safe.
+ */
+void tsedge_free_series_list(tsedge_series_info* series);
 
 /**
  * Returns lightweight statistics for an existing series.

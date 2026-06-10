@@ -8,7 +8,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef TSEDGE_MAX_SERIES_NAME
 #define TSEDGE_MAX_SERIES_NAME 255u
+#endif
 #ifndef TSEDGE_SEGMENT_MAX_BYTES
 #define TSEDGE_SEGMENT_MAX_BYTES (64u * 1024u * 1024u)
 #endif
@@ -42,11 +44,22 @@ typedef struct tsedge_series {
     size_t block_index_capacity;
 } tsedge_series;
 
+/* Validates a series name before it becomes a directory name. */
 int tsedge_series_validate_name(const char* name);
+
+/* Initializes one series object and loads or creates its storage directory. */
 int tsedge_series_init(tsedge_series* series, const char* series_dir, const char* name, bool create_dir);
+
+/* Releases memory owned by a series object. */
 void tsedge_series_free(tsedge_series* series);
+
+/* Appends one point through WAL and the series buffer. */
 int tsedge_series_append(struct tsedge_db* db, tsedge_series* series, int64_t timestamp, double value);
+
+/* Appends a batch of points to one series using the normal append path. */
 int tsedge_series_append_batch(struct tsedge_db* db, tsedge_series* series, const tsedge_point* points, size_t count);
+
+/* Adds a WAL-replayed point without writing it back to WAL. */
 int tsedge_series_add_recovered_point(struct tsedge_db* db, tsedge_series* series, const tsedge_point* point);
 
 /* Converts the current buffer into one compressed block in the segment file. */

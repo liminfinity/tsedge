@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 
+/* Selects a new active segment when the next block would exceed the size limit. */
 int tsedge_segment_rotate_if_needed(
     const char* series_dir_path,
     uint64_t block_size,

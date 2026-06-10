@@ -2,10 +2,13 @@
 #include "csv.h"
 #include "db.h"
 #include "series.h"
+#include "series_list.h"
 #include "series_query.h"
 #include "series_retention.h"
 #include "series_stats.h"
 #include "verify.h"
+
+#include <stdlib.h>
 
 int tsedge_open(const char* path, tsedge_db** out_db) {
     if (!path || !out_db) {
@@ -89,6 +92,14 @@ int tsedge_verify(const char* db_path, tsedge_verify_report* report) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
     return tsedge_verify_internal(db_path, report);
+}
+
+int tsedge_list_series(tsedge_db* db, tsedge_series_info** out_series, size_t* out_count) {
+    return tsedge_db_list_series(db, out_series, out_count);
+}
+
+void tsedge_free_series_list(tsedge_series_info* series) {
+    free(series);
 }
 
 int tsedge_get_series_stats(tsedge_db* db, const char* series_name, tsedge_series_stats* out_stats) {

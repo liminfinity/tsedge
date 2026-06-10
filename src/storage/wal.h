@@ -11,7 +11,10 @@
  * This is enough to recover buffered, not-yet-flushed points after a crash, but
  * it is not a full transactional subsystem like an industrial DBMS WAL.
  */
+/* Appends one accepted point to the WAL before it enters the buffer. */
 int tsedge_wal_append(tsedge_db* db, const char* series_name, const tsedge_point* point);
+
+/* Appends a batch of accepted points to the WAL in series order. */
 int tsedge_wal_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count);
 
 /* Replays WAL entries into series buffers during database open. */

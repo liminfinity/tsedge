@@ -3,6 +3,7 @@
 
 #include "series.h"
 
+/* Deletes whole segment files older than the requested timestamp boundary. */
 int tsedge_series_delete_before(struct tsedge_db* db, tsedge_series* series, int64_t older_than_timestamp);
 
 #endif

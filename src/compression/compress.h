@@ -13,6 +13,8 @@
  * directly, and later deltas are represented as delta-of-delta varints.
  */
 int tsedge_compress_timestamps(const tsedge_point* points, size_t count, uint8_t** out, size_t* out_size);
+
+/* Restores timestamp values from the delta-of-delta byte stream. */
 int tsedge_decompress_timestamps(const uint8_t* data, size_t size, size_t count, int64_t* out);
 
 /*
@@ -23,6 +25,8 @@ int tsedge_decompress_timestamps(const uint8_t* data, size_t size, size_t count,
  * the exact original bit pattern, including -0.0 and NaN payloads.
  */
 int tsedge_compress_values(const tsedge_point* points, size_t count, uint8_t** out, size_t* out_size);
+
+/* Restores exact double values from the XOR byte stream. */
 int tsedge_decompress_values(const uint8_t* data, size_t size, size_t count, double* out);
 
 #endif

@@ -24,6 +24,7 @@ set(TSEDGE_PRIVATE_HEADERS
     src/core/db.h
     src/core/series.h
     src/core/series_index.h
+    src/core/series_list.h
     src/core/series_query.h
     src/core/series_retention.h
     src/core/series_stats.h
@@ -32,7 +33,9 @@ set(TSEDGE_PRIVATE_HEADERS
     src/storage/block.h
     src/storage/segment.h
     src/storage/segment_files.h
+    src/storage/segment_reader.h
     src/storage/segment_rotation.h
+    src/storage/segment_writer.h
     src/storage/wal.h
 )
 
@@ -43,15 +46,17 @@ set(TSEDGE_SOURCES
     src/core/db.c
     src/core/series.c
     src/core/series_index.c
+    src/core/series_list.c
     src/core/series_query.c
     src/core/series_retention.c
     src/core/series_stats.c
     src/core/verify.c
     src/export/csv.c
     src/storage/block.c
-    src/storage/segment.c
     src/storage/segment_files.c
+    src/storage/segment_reader.c
     src/storage/segment_rotation.c
+    src/storage/segment_writer.c
     src/storage/wal.c
 )
 
@@ -60,7 +65,13 @@ set(TSEDGE_TEST_SOURCES
     tests/test_block.c
     tests/test_compress.c
     tests/test_db.c
+    tests/test_flush.c
+    tests/test_list_series.c
+    tests/test_retention.c
     tests/test_recovery.c
+    tests/test_segments.c
+    tests/test_stats.c
+    tests/test_verify.c
 )
 
 set(TSEDGE_DEMO_SOURCES
@@ -68,7 +79,22 @@ set(TSEDGE_DEMO_SOURCES
 )
 
 set(TSEDGE_ECOPOST_AGENT_SOURCES
-    examples/tsedge_ecopost_agent.c
+    examples/ecopost/ecopost_agent.c
+    examples/ecopost/ecopost_commands.c
+    examples/ecopost/ecopost_config.c
+    examples/ecopost/ecopost_fs.c
+    examples/ecopost/ecopost_ops.c
+    examples/ecopost/ecopost_output.c
+    examples/ecopost/ecopost_sensors.c
+    examples/ecopost/ecopost_state.c
+)
+
+set(TSEDGE_CRASH_WRITER_SOURCES
+    examples/crash_recovery/tsedge_crash_writer.c
+)
+
+set(TSEDGE_RECOVER_CHECK_SOURCES
+    examples/crash_recovery/tsedge_recover_check.c
 )
 
 set(TSEDGE_BENCH_SOURCES
@@ -178,7 +204,20 @@ tsedge_link_math(tsedge_demo)
 
 add_executable(tsedge_ecopost_agent ${TSEDGE_ECOPOST_AGENT_SOURCES})
 target_link_libraries(tsedge_ecopost_agent PRIVATE tsedge)
+target_include_directories(tsedge_ecopost_agent PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/examples/ecopost
+)
 tsedge_link_math(tsedge_ecopost_agent)
+
+if(UNIX)
+    add_executable(tsedge_crash_writer ${TSEDGE_CRASH_WRITER_SOURCES})
+    target_link_libraries(tsedge_crash_writer PRIVATE tsedge)
+    tsedge_link_math(tsedge_crash_writer)
+
+    add_executable(tsedge_recover_check ${TSEDGE_RECOVER_CHECK_SOURCES})
+    target_link_libraries(tsedge_recover_check PRIVATE tsedge)
+    tsedge_link_math(tsedge_recover_check)
+endif()
 
 add_executable(tsedge_bench ${TSEDGE_BENCH_SOURCES})
 target_link_libraries(tsedge_bench PRIVATE tsedge)
@@ -207,6 +246,15 @@ tsedge_link_math(tsedge_tests)
 
 add_test(NAME tsedge_tests COMMAND $<TARGET_FILE:tsedge_tests>)
 
+if(UNIX)
+    add_test(NAME tsedge_crash_recovery_demo
+        COMMAND sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_crash_recovery_demo.sh
+            $<TARGET_FILE:tsedge_crash_writer>
+            $<TARGET_FILE:tsedge_recover_check>
+    )
+endif()
+
 install(TARGETS tsedge tsedge_static
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -216,6 +264,12 @@ install(TARGETS tsedge tsedge_static
 install(TARGETS tsedge_demo tsedge_ecopost_agent tsedge_bench file_bench
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(TARGET tsedge_crash_writer)
+    install(TARGETS tsedge_crash_writer tsedge_recover_check
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
 
 if(TARGET sqlite_bench)
     install(TARGETS sqlite_bench

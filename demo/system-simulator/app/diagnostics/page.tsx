@@ -10,6 +10,7 @@ import { LoadPanel, makeLoadSample } from "@/components/LoadPanel";
 import { MaintenancePanel } from "@/components/MaintenancePanel";
 import { OperationResultPanel } from "@/components/OperationResultPanel";
 import { SegmentShelf } from "@/components/SegmentShelf";
+import { SeriesListPanel } from "@/components/SeriesListPanel";
 import { StatusHeader } from "@/components/StatusHeader";
 import { StorageTree } from "@/components/StorageTree";
 import { ViewNav } from "@/components/ViewNav";
@@ -135,6 +136,7 @@ export default function Page() {
         <MaintenancePanel state={state} checking={pendingCommand === "verify_db"} />
       </div>
       <OperationResultPanel state={state} />
+      <SeriesListPanel state={state} />
       <LoadPanel history={loadHistory} />
       <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="space-y-4">

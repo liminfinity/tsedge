@@ -227,6 +227,55 @@ if (rc == TSEDGE_OK) {
 }
 ```
 
+## `tsedge_list_series`
+
+Returns a copied list of all series loaded in an open database. The function
+uses the database's in-memory series registry and lightweight stats.
+
+The output structure is:
+
+```c
+typedef struct {
+    char name[TSEDGE_MAX_SERIES_NAME + 1u];
+    uint64_t total_points;
+    uint32_t segment_count;
+    uint32_t block_count;
+    uint64_t compressed_size_bytes;
+} tsedge_series_info;
+```
+
+Parameters:
+
+- `db`: database handle.
+- `out_series`: receives a newly allocated array, or `NULL` for an empty
+  database.
+- `out_count`: receives the number of entries.
+
+Returns:
+
+- `TSEDGE_OK` on success.
+- `TSEDGE_OK` with `*out_series == NULL` and `*out_count == 0` for an empty
+  database.
+- `TSEDGE_ERR_INVALID_ARGUMENT` for invalid pointers.
+- `TSEDGE_ERR_NO_MEMORY` if the list cannot be allocated.
+
+The caller must release the array with `tsedge_free_series_list`.
+
+Example:
+
+```c
+tsedge_series_info* series = NULL;
+size_t count = 0;
+
+int rc = tsedge_list_series(db, &series, &count);
+if (rc == TSEDGE_OK) {
+    for (size_t i = 0; i < count; ++i) {
+        printf("%s\n", series[i].name);
+    }
+    tsedge_free_series_list(series);
+}
+```
+
 ## `tsedge_get_series_stats`
 
 Returns lightweight statistics for an existing series. The function uses the

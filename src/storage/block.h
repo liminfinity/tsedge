@@ -58,10 +58,19 @@ typedef struct {
     uint32_t payload_size;
 } tsedge_block_index_entry;
 
+/* Writes one fixed-size block header to a segment file. */
 int tsedge_block_write_header(FILE* f, const tsedge_block_header* header);
+
+/* Reads one block header and reports EOF only at a clean block boundary. */
 int tsedge_block_read_header(FILE* f, tsedge_block_header* header, bool* eof);
+
+/* Writes compressed timestamp and value payload streams after a header. */
 int tsedge_block_write_payload(FILE* f, const uint8_t* timestamp_data, size_t timestamp_size, const uint8_t* value_data, size_t value_size);
+
+/* Reads compressed payload streams for a previously read block header. */
 int tsedge_block_read_payload(FILE* f, const tsedge_block_header* header, uint8_t** out_timestamp_data, uint8_t** out_value_data);
+
+/* Advances the file cursor past one block payload without decoding it. */
 int tsedge_block_skip_payload(FILE* f, const tsedge_block_header* header);
 
 #endif

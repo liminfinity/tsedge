@@ -173,6 +173,26 @@ export const liveStateSchema = z.object({
       first_error_path: null,
       first_error_message: null
     }),
+  series_list: z
+    .object({
+      status: z.string().default("ok"),
+      message: z.string().optional(),
+      count: z.number(),
+      items: z.array(
+        z.object({
+          name: z.string(),
+          total_points: z.number(),
+          segment_count: z.number(),
+          block_count: z.number(),
+          compressed_size_bytes: z.number()
+        })
+      )
+    })
+    .default({
+      status: "ok",
+      count: 0,
+      items: []
+    }),
   events: z.array(
     z.object({
       time: z.string(),
