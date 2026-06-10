@@ -121,7 +121,9 @@ int tsedge_segment_discover_ids(const char* series_dir_path, uint32_t** out_ids,
         return TSEDGE_ERR_IO;
     }
 
-    qsort(ids, count, sizeof(*ids), compare_u32);
+    if (count > 1u) {
+        qsort(ids, count, sizeof(*ids), compare_u32);
+    }
     *out_ids = ids;
     *out_count = count;
     return TSEDGE_OK;

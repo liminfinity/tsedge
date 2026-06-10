@@ -1,9 +1,15 @@
+#include "db.h"
 #include "block.h"
 #include "test_helpers.h"
 #include "tsedge.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+static void simulate_crash(tsedge_db** db) {
+    tsedge_db_free_memory(*db);
+    *db = NULL;
+}
 
 void test_segment_rotation_creates_multiple_files(void) {
     const char* path = temp_path("segment_rotation");
@@ -147,7 +153,7 @@ void test_wal_replay_with_segment_rotation(void) {
     CHECK_OK(tsedge_append(db, "s", (int64_t)flushed_count + 1, 2.0));
     CHECK_OK(tsedge_append(db, "s", (int64_t)flushed_count + 2, 3.0));
     /* Intentionally skip close: the last three points must be recovered from WAL. */
-    db = NULL;
+    simulate_crash(&db);
 
     CHECK_OK(tsedge_open(path, &db));
     tsedge_series_stats stats;

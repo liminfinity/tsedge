@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "db.h"
 #include "test_helpers.h"
 #include "tsedge.h"
 
@@ -114,6 +115,11 @@ static void segment_path_for(char* out, size_t out_size, const char* path) {
 static uint32_t fuzz_next(uint32_t* state) {
     *state = (*state * 1664525u) + 1013904223u;
     return *state;
+}
+
+static void simulate_crash(tsedge_db** db) {
+    tsedge_db_free_memory(*db);
+    *db = NULL;
 }
 
 static int create_fake_segment_database(const char* path, const unsigned char* data, size_t size) {
@@ -269,7 +275,7 @@ void test_corrupt_wal_checksum(void) {
     CHECK(fseek(f, size - 1, SEEK_SET) == 0);
     CHECK(fwrite(&bad, 1, 1, f) == 1);
     CHECK(fclose(f) == 0);
-    db = NULL;
+    simulate_crash(&db);
 
     CHECK(tsedge_open(path, &db) == TSEDGE_ERR_CORRUPT);
     rm_rf(path);
@@ -289,7 +295,7 @@ void test_corrupt_wal_torn_final_entry(void) {
     uint32_t first_size = read_wal_entry_size(wal_path);
     CHECK(first_size > 0);
     CHECK(truncate_file_to(wal_path, (long)first_size + 8) == 0);
-    db = NULL;
+    simulate_crash(&db);
 
     CHECK_OK(tsedge_open(path, &db));
     point_vec vec;

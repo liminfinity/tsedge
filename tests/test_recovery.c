@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "db.h"
 #include "tsedge.h"
 
 #include <stdio.h>
@@ -28,6 +29,11 @@ extern int tsedge_test_failures;
         return; \
     } \
 } while (0)
+
+static void simulate_crash(tsedge_db** db) {
+    tsedge_db_free_memory(*db);
+    *db = NULL;
+}
 
 typedef struct {
     tsedge_point points[8192];
@@ -98,7 +104,7 @@ void test_wal_recovery(void) {
      * Simulate a crash by intentionally not calling tsedge_close. The next open
      * should replay WAL entries for points that were accepted but not flushed.
      */
-    db = NULL;
+    simulate_crash(&db);
 
     CHECK_OK(tsedge_open(path, &db));
     point_vec vec;
@@ -138,7 +144,7 @@ void test_wal_incomplete_last_entry(void) {
     uint32_t first_size = first_wal_entry_size(wal_path);
     CHECK(first_size > 0);
     CHECK(truncate(wal_path, (off_t)first_size + 10) == 0);
-    db = NULL;
+    simulate_crash(&db);
 
     CHECK_OK(tsedge_open(path, &db));
     point_vec vec;
@@ -170,7 +176,7 @@ void test_wal_bad_checksum(void) {
     CHECK(fseek(f, size - 1, SEEK_SET) == 0);
     CHECK(fputc(byte ^ 0xff, f) != EOF);
     CHECK(fclose(f) == 0);
-    db = NULL;
+    simulate_crash(&db);
 
     tsedge_db* reopened = NULL;
     CHECK(tsedge_open(path, &reopened) == TSEDGE_ERR_CORRUPT);
@@ -196,7 +202,7 @@ void test_wal_recovery_after_batch_append(void) {
      * skipping close, this test leaves accepted batch points only in WAL/buffer
      * state and verifies that open can replay them.
      */
-    db = NULL;
+    simulate_crash(&db);
 
     CHECK_OK(tsedge_open(path, &db));
     point_vec vec;
