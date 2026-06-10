@@ -11,6 +11,7 @@ import { MaintenancePanel } from "@/components/MaintenancePanel";
 import { OperationResultPanel } from "@/components/OperationResultPanel";
 import { SegmentShelf } from "@/components/SegmentShelf";
 import { SeriesListPanel } from "@/components/SeriesListPanel";
+import { CsvPanel } from "@/components/CsvPanel";
 import { StatusHeader } from "@/components/StatusHeader";
 import { StorageTree } from "@/components/StorageTree";
 import { ViewNav } from "@/components/ViewNav";
@@ -72,7 +73,7 @@ export default function Page() {
     return () => window.clearInterval(timer);
   }, []);
 
-  async function sendCommand(command: DemoCommand) {
+  async function sendCommand(command: DemoCommand, series?: string) {
     setPendingCommand(command);
     setCommandError("");
     setCommandMessage("");
@@ -80,7 +81,7 @@ export default function Page() {
       const response = await fetch("/api/command", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command })
+        body: JSON.stringify(series ? { command, series } : { command })
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
@@ -134,6 +135,11 @@ export default function Page() {
         <DatabaseStatePanel state={state} />
         <CompressionPanel state={state} />
         <MaintenancePanel state={state} checking={pendingCommand === "verify_db"} />
+        <CsvPanel
+          state={state}
+          pending={pendingCommand === "export_csv"}
+          onExport={(series) => sendCommand("export_csv", series)}
+        />
       </div>
       <OperationResultPanel state={state} />
       <SeriesListPanel state={state} />
@@ -154,9 +160,6 @@ export default function Page() {
           <StorageTree text={tree} />
         </div>
       </div>
-      <footer className="pb-4 text-center text-xs text-slate-500">
-        Данные обновляются автоматически.
-      </footer>
     </main>
   );
 }

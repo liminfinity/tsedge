@@ -12,6 +12,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 option(TSEDGE_WAL_FSYNC "Flush and fsync WAL entries before append returns" OFF)
+option(TSEDGE_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 set(TSEDGE_SEGMENT_MAX_BYTES "" CACHE STRING "Override segment rotation limit in bytes")
 
 set(TSEDGE_PUBLIC_HEADERS
@@ -23,6 +24,7 @@ set(TSEDGE_PRIVATE_HEADERS
     src/compression/compress.h
     src/core/db.h
     src/core/series.h
+    src/core/series_delete.h
     src/core/series_index.h
     src/core/series_list.h
     src/core/series_query.h
@@ -45,6 +47,7 @@ set(TSEDGE_SOURCES
     src/compression/compress.c
     src/core/db.c
     src/core/series.c
+    src/core/series_delete.c
     src/core/series_index.c
     src/core/series_list.c
     src/core/series_query.c
@@ -64,7 +67,9 @@ set(TSEDGE_TEST_SOURCES
     tests/test_main.c
     tests/test_block.c
     tests/test_compress.c
+    tests/test_corruption.c
     tests/test_db.c
+    tests/test_delete_series.c
     tests/test_flush.c
     tests/test_list_series.c
     tests/test_retention.c
@@ -123,6 +128,22 @@ set(TSEDGE_INTERNAL_INCLUDE_DIRS
 function(tsedge_link_math target_name)
     if(TSEDGE_MATH_LIBRARY)
         target_link_libraries(${target_name} PRIVATE ${TSEDGE_MATH_LIBRARY})
+    endif()
+endfunction()
+
+function(tsedge_enable_sanitizers target_name)
+    if(NOT TSEDGE_ENABLE_SANITIZERS)
+        return()
+    endif()
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        message(WARNING "TSEDGE_ENABLE_SANITIZERS is enabled, but the current C compiler is not GCC or Clang")
+        return()
+    endif()
+
+    target_compile_options(${target_name} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    get_target_property(TSEDGE_TARGET_TYPE ${target_name} TYPE)
+    if(NOT TSEDGE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
+        target_link_options(${target_name} PRIVATE -fsanitize=address,undefined)
     endif()
 endfunction()
 
@@ -254,6 +275,24 @@ if(UNIX)
             $<TARGET_FILE:tsedge_recover_check>
     )
 endif()
+
+foreach(TSEDGE_SANITIZER_TARGET
+    tsedge
+    tsedge_static
+    tsedge_testlib
+    tsedge_demo
+    tsedge_ecopost_agent
+    tsedge_crash_writer
+    tsedge_recover_check
+    tsedge_bench
+    file_bench
+    sqlite_bench
+    tsedge_tests
+)
+    if(TARGET ${TSEDGE_SANITIZER_TARGET})
+        tsedge_enable_sanitizers(${TSEDGE_SANITIZER_TARGET})
+    endif()
+endforeach()
 
 install(TARGETS tsedge tsedge_static
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

@@ -152,6 +152,16 @@ int tsedge_close(tsedge_db* db);
 int tsedge_create_series(tsedge_db* db, const char* name);
 
 /**
+ * Deletes a series and removes its metadata, segments, buffers and index entries.
+ *
+ * Pending WAL entries are cleared through a flush before the series directory is
+ * removed, so recovery cannot recreate the deleted series after reopen.
+ *
+ * Returns TSEDGE_OK on success or a negative error code on failure.
+ */
+int tsedge_delete_series(tsedge_db* db, const char* series_name);
+
+/**
  * Appends a single point to an existing series.
  *
  * The point is first written to the WAL and then placed into the in-memory

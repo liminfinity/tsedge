@@ -14,6 +14,8 @@ const commandLabels: Record<string, string> = {
   run_retention: "Очистка старых данных",
   export_csv: "Выгрузка CSV",
   verify_db: "Проверка базы",
+  create_debug_series: "Создать тестовый ряд",
+  delete_debug_series: "Удалить тестовый ряд",
   simulate_crash: "Сбой",
   recover_from_wal: "WAL replay",
   pause: "Пауза",

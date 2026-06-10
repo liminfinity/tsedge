@@ -58,7 +58,10 @@ export function EventLog({ state }: { state: LiveState }) {
 }
 
 function shortMessage(message: string) {
-  if (message.includes("Получено 6 новых точек")) {
+  if (message.includes("debug.temp")) {
+    return message;
+  }
+  if (message.includes("Получено 6 новых точек") || message.includes("Записано 6 точек") || message.includes("Записаны точки")) {
     return "6 точек записано";
   }
   if (message.includes("WAL")) {

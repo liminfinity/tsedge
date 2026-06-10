@@ -64,7 +64,7 @@ export function weatherText(values: Record<string, number>) {
 }
 
 export function stationEventText(message: string) {
-  if (message.includes("Получено 6 новых точек")) {
+  if (message.includes("Получено 6 новых точек") || message.includes("Записано 6 точек") || message.includes("Записаны точки")) {
     return "Данные обновлены";
   }
   if (message.includes("Связь потеряна")) {

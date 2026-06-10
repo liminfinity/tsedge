@@ -258,16 +258,36 @@ int write_live_state(agent_state* state) {
             state->crash_simulated ? "true" : "false",
             state->wal_replayed ? "true" : "false",
             state->recovered_points);
-    if (state->last_csv_file[0]) {
-        fprintf(out,
-                "  \"export\": {\"csv_ready\":%s,\"last_file\":\"%s\"},\n",
-                state->csv_ready ? "true" : "false",
-                state->last_csv_file);
+    fputs("  \"export\": {\"available\":true", out);
+    fprintf(out, ",\"last_run\":%s,\"ok\":%s,\"csv_ready\":%s",
+            state->export_last_run ? "true" : "false",
+            state->export_ok ? "true" : "false",
+            state->csv_ready ? "true" : "false");
+    fputs(",\"series\":", out);
+    if (state->export_series[0]) {
+        write_json_string(out, state->export_series);
     } else {
-        fprintf(out,
-                "  \"export\": {\"csv_ready\":%s,\"last_file\":null},\n",
-                state->csv_ready ? "true" : "false");
+        fputs("null", out);
     }
+    fputs(",\"last_file\":", out);
+    if (state->last_csv_file[0]) {
+        write_json_string(out, state->last_csv_file);
+    } else {
+        fputs("null", out);
+    }
+    fputs(",\"path\":", out);
+    if (state->export_path[0]) {
+        write_json_string(out, state->export_path);
+    } else {
+        fputs("null", out);
+    }
+    fprintf(out, ",\"rows\":%zu,\"message\":", state->export_rows);
+    if (state->export_message[0]) {
+        write_json_string(out, state->export_message);
+    } else {
+        fputs("null", out);
+    }
+    fputs("},\n", out);
     fputs("  \"last_command\": {", out);
     if (state->last_command.name[0]) {
         fputs("\"name\":", out);

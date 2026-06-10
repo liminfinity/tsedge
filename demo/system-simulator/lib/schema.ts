@@ -18,10 +18,13 @@ export const commandSchema = z.object({
     "run_retention",
     "export_csv",
     "verify_db",
+    "create_debug_series",
+    "delete_debug_series",
     "reset_demo",
     "pause",
     "resume"
-  ])
+  ]),
+  series: z.string().optional()
 });
 
 export const liveStateSchema = z.object({
@@ -104,10 +107,29 @@ export const liveStateSchema = z.object({
     wal_replayed: z.boolean(),
     recovered_points: z.number()
   }),
-  export: z.object({
-    csv_ready: z.boolean(),
-    last_file: z.string().nullable()
-  }),
+  export: z
+    .object({
+      available: z.boolean().default(true),
+      last_run: z.boolean().default(false),
+      ok: z.boolean().default(false),
+      csv_ready: z.boolean(),
+      series: z.string().nullable().default(null),
+      last_file: z.string().nullable(),
+      path: z.string().nullable().default(null),
+      rows: z.number().default(0),
+      message: z.string().nullable().default(null)
+    })
+    .default({
+      available: true,
+      last_run: false,
+      ok: false,
+      csv_ready: false,
+      series: null,
+      last_file: null,
+      path: null,
+      rows: 0,
+      message: null
+    }),
   last_command: z
     .object({
       name: z.string().nullable(),

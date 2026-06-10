@@ -44,7 +44,7 @@ export default function StationPage() {
     return () => window.clearInterval(timer);
   }, [load]);
 
-  async function sendCommand(command: DemoCommand) {
+  async function sendCommand(command: DemoCommand, series?: string) {
     if (command === "export_csv" && state && !state.network.online) {
       setCommandMessage("");
       setCommandError("Выгрузка доступна после восстановления связи.");
@@ -57,7 +57,7 @@ export default function StationPage() {
       const response = await fetch("/api/command", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command })
+        body: JSON.stringify(series ? { command, series } : { command })
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null);

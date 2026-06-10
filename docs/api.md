@@ -276,6 +276,37 @@ if (rc == TSEDGE_OK) {
 }
 ```
 
+## `tsedge_delete_series`
+
+Deletes one time series from an open database. The function removes the series
+from the in-memory registry, frees its buffer and block index, and deletes the
+series directory with `metadata.txt` and `segment_*.tse` files.
+
+Before removing files, TSEdge flushes buffers through the normal WAL truncation
+path. This prevents pending WAL entries from recreating the deleted series after
+the database is reopened.
+
+Parameters:
+
+- `db`: database handle.
+- `series_name`: name of the series to delete.
+
+Returns:
+
+- `TSEDGE_OK` on success.
+- `TSEDGE_ERR_INVALID_ARGUMENT` for invalid arguments.
+- `TSEDGE_ERR_NOT_FOUND` if the series does not exist.
+- `TSEDGE_ERR_IO` if files cannot be removed or metadata cannot be updated.
+
+Example:
+
+```c
+int rc = tsedge_delete_series(db, "air.temperature");
+if (rc != TSEDGE_OK) {
+    fprintf(stderr, "failed to delete series\n");
+}
+```
+
 ## `tsedge_get_series_stats`
 
 Returns lightweight statistics for an existing series. The function uses the

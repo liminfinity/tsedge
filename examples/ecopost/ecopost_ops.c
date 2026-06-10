@@ -5,6 +5,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void sanitize_series_filename(const char* series_name, char* out, size_t out_size) {
+    if (!out || out_size == 0) {
+        return;
+    }
+    size_t pos = 0;
+    if (series_name) {
+        for (const unsigned char* p = (const unsigned char*)series_name; *p && pos + 5u < out_size; ++p) {
+            if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_' || *p == '-') {
+                out[pos++] = (char)*p;
+            } else if (*p == '.') {
+                out[pos++] = '_';
+            } else {
+                out[pos++] = '_';
+            }
+        }
+    }
+    if (pos == 0) {
+        snprintf(out, out_size, "series.csv");
+        return;
+    }
+    snprintf(out + pos, out_size - pos, ".csv");
+}
+
+static void set_export_state(agent_state* state, int ok, const char* series_name, const char* filename, const char* path, size_t rows, const char* message) {
+    state->export_last_run = 1;
+    state->export_ok = ok;
+    state->csv_ready = ok;
+    snprintf(state->export_series, sizeof(state->export_series), "%s", series_name ? series_name : "");
+    snprintf(state->last_csv_file, sizeof(state->last_csv_file), "%s", ok && filename ? filename : "");
+    snprintf(state->export_path, sizeof(state->export_path), "%s", ok && path ? path : "");
+    state->export_rows = rows;
+    snprintf(state->export_message, sizeof(state->export_message), "%s", message ? message : "");
+}
+
 int create_series(agent_state* state) {
     for (size_t i = 0; i < SERIES_COUNT; ++i) {
         int rc = tsedge_create_series(state->db, SENSORS[i].name);
@@ -49,9 +83,33 @@ int append_history(agent_state* state) {
     return TSEDGE_OK;
 }
 
-static int append_one_step(agent_state* state) {
+static int debug_series_exists(agent_state* state) {
+    tsedge_series_stats stats;
+    return tsedge_get_series_stats(state->db, "debug.temp", &stats) == TSEDGE_OK;
+}
+
+static double debug_value(size_t index) {
+    return 20.0 + (double)(index % 60u) * 0.05;
+}
+
+static int append_debug_point_if_exists(agent_state* state, int64_t timestamp, size_t* added) {
+    if (added) {
+        *added = 0;
+    }
+    if (!debug_series_exists(state)) {
+        return TSEDGE_OK;
+    }
+    int rc = tsedge_append(state->db, "debug.temp", timestamp, debug_value(state->tick));
+    if (rc == TSEDGE_OK && added) {
+        *added = 1u;
+    }
+    return rc;
+}
+
+static int append_one_step(agent_state* state, size_t* out_points_written) {
     int64_t timestamp = ecopost_simulated_timestamp(state);
     int pollution_active = state->pollution_ticks_left > 0;
+    size_t points_written = SERIES_COUNT;
 
     for (size_t i = 0; i < SERIES_COUNT; ++i) {
         double value = sensor_value(state->tick, i, pollution_active && i == 4u);
@@ -63,19 +121,30 @@ static int append_one_step(agent_state* state) {
         state->last_values[i] = value;
     }
 
+    size_t debug_added = 0;
+    int rc = append_debug_point_if_exists(state, timestamp, &debug_added);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    points_written += debug_added;
+
     if (state->pollution_ticks_left > 0) {
         --state->pollution_ticks_left;
     }
     ++state->tick;
+    if (out_points_written) {
+        *out_points_written = points_written;
+    }
     return TSEDGE_OK;
 }
 
 int append_live_points(agent_state* state) {
-    int rc = append_one_step(state);
+    size_t points_written = 0;
+    int rc = append_one_step(state, &points_written);
     if (rc != TSEDGE_OK) {
         return rc;
     }
-    add_event(state, "append", "Получено 6 новых точек от датчиков.");
+    add_event(state, "append", points_written > SERIES_COUNT ? "Записаны точки датчиков и debug.temp." : "Записано 6 точек датчиков.");
     add_event(state, "wal", "Точки записаны в WAL.");
     add_event(state, "buffer", "Точки добавлены в буфер.");
     return TSEDGE_OK;
@@ -94,6 +163,17 @@ size_t total_segments(agent_state* state) {
         }
     }
     return total;
+}
+
+typedef struct {
+    size_t count;
+} range_count_context;
+
+static int count_point_callback(const tsedge_point* point, void* user_data) {
+    (void)point;
+    range_count_context* ctx = (range_count_context*)user_data;
+    ++ctx->count;
+    return 0;
 }
 
 storage_totals collect_storage_totals(agent_state* state) {
@@ -150,38 +230,81 @@ int run_retention(agent_state* state) {
     return TSEDGE_OK;
 }
 
-int export_csv(agent_state* state) {
-    char path[1024];
-    path_join(path, sizeof(path), state->config.output_path, "ecopost_temperature.csv");
-    int64_t to = ecopost_simulated_timestamp(state);
-    int rc = tsedge_flush_all(state->db);
+int export_csv(agent_state* state, const char* series_name) {
+    if (!series_name || series_name[0] == '\0') {
+        set_export_state(state, 0, "", NULL, NULL, 0, "Имя ряда пустое.");
+        set_last_command(state, "export_csv", "error", "Имя ряда пустое.", 0);
+        add_event(state, "export", "Не удалось выгрузить CSV: имя ряда пустое.");
+        return TSEDGE_OK;
+    }
+
+    tsedge_series_stats stats;
+    int rc = tsedge_get_series_stats(state->db, series_name, &stats);
     if (rc != TSEDGE_OK) {
+        const char* message = rc == TSEDGE_ERR_NOT_FOUND ? "Ряд не найден." : "Некорректное имя ряда.";
+        char command_message[192];
+        snprintf(command_message, sizeof(command_message), "%s: %s", rc == TSEDGE_ERR_NOT_FOUND ? "Ряд не найден" : "Некорректное имя ряда", series_name);
+        set_export_state(state, 0, series_name, NULL, NULL, 0, message);
+        set_last_command(state, "export_csv", "error", command_message, 0);
+        add_event(state, "export", rc == TSEDGE_ERR_NOT_FOUND ? "Не удалось выгрузить CSV: ряд не найден." : "Не удалось выгрузить CSV: имя ряда некорректно.");
+        return TSEDGE_OK;
+    }
+
+    char filename[160];
+    sanitize_series_filename(series_name, filename, sizeof(filename));
+    char path[1024];
+    path_join(path, sizeof(path), state->config.output_path, filename);
+    int64_t to = ecopost_simulated_timestamp(state);
+    rc = tsedge_flush(state->db, series_name);
+    if (rc != TSEDGE_OK) {
+        set_export_state(state, 0, series_name, NULL, NULL, 0, "Не удалось сбросить буфер.");
+        set_last_command(state, "export_csv", "error", tsedge_strerror(rc), 0);
         return rc;
     }
     add_event(state, "buffer", "Буфер сброшен на диск.");
 
-    rc = tsedge_export_csv(state->db, "air.temperature", START_TIMESTAMP, to, path);
+    range_count_context ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    rc = tsedge_read_range(state->db, series_name, START_TIMESTAMP, to, count_point_callback, &ctx);
     if (rc != TSEDGE_OK) {
+        set_export_state(state, 0, series_name, NULL, NULL, 0, "Не удалось прочитать ряд.");
+        set_last_command(state, "export_csv", "error", tsedge_strerror(rc), 0);
         return rc;
     }
-    state->csv_ready = 1;
-    snprintf(state->last_csv_file, sizeof(state->last_csv_file), "ecopost_temperature.csv");
-    set_last_command(state, "export_csv", "ok", "CSV-файл готов.", 0);
-    add_event(state, "export", "CSV-файл готов для выгрузки.");
+
+    rc = tsedge_export_csv(state->db, series_name, START_TIMESTAMP, to, path);
+    if (rc != TSEDGE_OK) {
+        set_export_state(state, 0, series_name, NULL, NULL, 0, "CSV не создан.");
+        set_last_command(state, "export_csv", "error", tsedge_strerror(rc), 0);
+        return rc;
+    }
+    char message[192];
+    snprintf(message, sizeof(message), "CSV выгружен: %s", series_name);
+    set_export_state(state, 1, series_name, filename, path, ctx.count, "CSV выгружен.");
+    set_last_command(state, "export_csv", "ok", message, ctx.count);
+    add_event(state, "export", message);
     return TSEDGE_OK;
 }
 
 int append_steps(agent_state* state, size_t steps, const char* command_name, const char* message) {
+    size_t affected = 0;
     for (size_t i = 0; i < steps; ++i) {
-        int rc = append_one_step(state);
+        size_t written = 0;
+        int rc = append_one_step(state, &written);
         if (rc != TSEDGE_OK) {
-            set_last_command(state, command_name, "error", tsedge_strerror(rc), i * SERIES_COUNT);
+            set_last_command(state, command_name, "error", tsedge_strerror(rc), affected);
             return rc;
         }
+        affected += written;
     }
-    size_t affected = steps * SERIES_COUNT;
-    set_last_command(state, command_name, "ok", message, affected);
-    add_event(state, "append", message);
+    char event_message[128];
+    if (affected == steps * SERIES_COUNT) {
+        snprintf(event_message, sizeof(event_message), "%s", message);
+    } else {
+        snprintf(event_message, sizeof(event_message), "Добавлено %zu точек, включая debug.temp.", affected);
+    }
+    set_last_command(state, command_name, "ok", event_message, affected);
+    add_event(state, "append", event_message);
     return TSEDGE_OK;
 }
 
@@ -193,6 +316,7 @@ int append_batch_command(agent_state* state) {
     }
 
     size_t start_tick = state->tick;
+    size_t affected = DIAG_BATCH_SIZE * SERIES_COUNT;
     for (size_t sensor = 0; sensor < SERIES_COUNT; ++sensor) {
         for (size_t j = 0; j < DIAG_BATCH_SIZE; ++j) {
             size_t index = start_tick + j;
@@ -208,11 +332,25 @@ int append_batch_command(agent_state* state) {
         state->last_values[sensor] = points[DIAG_BATCH_SIZE - 1u].value;
     }
 
+    if (debug_series_exists(state)) {
+        for (size_t j = 0; j < DIAG_BATCH_SIZE; ++j) {
+            size_t index = start_tick + j;
+            points[j].timestamp = START_TIMESTAMP + (int64_t)index * STEP_MS;
+            points[j].value = debug_value(index);
+        }
+        int rc = tsedge_append_batch(state->db, "debug.temp", points, DIAG_BATCH_SIZE);
+        if (rc != TSEDGE_OK) {
+            free(points);
+            set_last_command(state, "append_batch", "error", tsedge_strerror(rc), affected);
+            return rc;
+        }
+        affected += DIAG_BATCH_SIZE;
+    }
+
     free(points);
     state->tick += DIAG_BATCH_SIZE;
-    size_t affected = DIAG_BATCH_SIZE * SERIES_COUNT;
-    set_last_command(state, "append_batch", "ok", "Batch-запись выполнена.", affected);
-    add_event(state, "append", "Batch-запись выполнена.");
+    set_last_command(state, "append_batch", "ok", affected > DIAG_BATCH_SIZE * SERIES_COUNT ? "Batch-запись выполнена, включая debug.temp." : "Batch-запись выполнена.", affected);
+    add_event(state, "append", affected > DIAG_BATCH_SIZE * SERIES_COUNT ? "Batch-запись выполнена, включая debug.temp." : "Batch-запись выполнена.");
     return TSEDGE_OK;
 }
 
@@ -225,17 +363,6 @@ int flush_all_command(agent_state* state) {
     set_last_command(state, "flush_all", "ok", "Буфер сброшен на диск.", 0);
     add_event(state, "buffer", "Буфер сброшен на диск.");
     return TSEDGE_OK;
-}
-
-typedef struct {
-    size_t count;
-} range_count_context;
-
-static int count_point_callback(const tsedge_point* point, void* user_data) {
-    (void)point;
-    range_count_context* ctx = (range_count_context*)user_data;
-    ++ctx->count;
-    return 0;
 }
 
 int read_last_range_command(agent_state* state) {
@@ -334,6 +461,45 @@ int verify_db(agent_state* state) {
     return rc == TSEDGE_ERR_CORRUPT ? TSEDGE_OK : rc;
 }
 
+int create_debug_series(agent_state* state) {
+    const char* name = "debug.temp";
+    int existed = debug_series_exists(state);
+    int rc = tsedge_create_series(state->db, name);
+    if (rc != TSEDGE_OK) {
+        set_last_command(state, "create_debug_series", "error", tsedge_strerror(rc), 0);
+        return rc;
+    }
+
+    int64_t timestamp = ecopost_simulated_timestamp(state);
+    for (size_t i = 0; i < 8u; ++i) {
+        rc = tsedge_append(state->db, name, timestamp + (int64_t)i * STEP_MS, debug_value(state->tick + i));
+        if (rc != TSEDGE_OK) {
+            set_last_command(state, "create_debug_series", "error", tsedge_strerror(rc), i);
+            return rc;
+        }
+    }
+
+    set_last_command(state, "create_debug_series", "ok", existed ? "В debug.temp добавлено 8 точек." : "Тестовый ряд создан: 8 точек.", 8u);
+    add_event(state, "append", existed ? "В debug.temp добавлено 8 точек." : "Тестовый ряд debug.temp создан.");
+    return TSEDGE_OK;
+}
+
+int delete_debug_series(agent_state* state) {
+    int rc = tsedge_delete_series(state->db, "debug.temp");
+    if (rc == TSEDGE_ERR_NOT_FOUND) {
+        set_last_command(state, "delete_debug_series", "error", "Тестовый ряд не найден.", 0);
+        add_event(state, "delete", "Тестовый ряд не найден.");
+        return TSEDGE_OK;
+    }
+    if (rc != TSEDGE_OK) {
+        set_last_command(state, "delete_debug_series", "error", tsedge_strerror(rc), 0);
+        return rc;
+    }
+    set_last_command(state, "delete_debug_series", "ok", "Тестовый ряд удалён.", 0);
+    add_event(state, "delete", "Тестовый ряд удалён.");
+    return TSEDGE_OK;
+}
+
 int reset_demo(agent_state* state) {
     if (state->db) {
         tsedge_close(state->db);
@@ -356,6 +522,12 @@ int reset_demo(agent_state* state) {
     state->recovered_points = 0;
     state->csv_ready = 0;
     state->last_csv_file[0] = '\0';
+    state->export_last_run = 0;
+    state->export_ok = 0;
+    state->export_series[0] = '\0';
+    state->export_path[0] = '\0';
+    state->export_rows = 0;
+    state->export_message[0] = '\0';
     state->retention_last_run = 0;
     state->retention_deleted_count = 0;
     state->retention_last_deleted[0] = '\0';

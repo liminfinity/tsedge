@@ -6,21 +6,11 @@
 #include <string.h>
 #include <unistd.h>
 
-int read_command(agent_state* state, char* command, size_t command_size) {
-    char path[1024];
-    path_join(path, sizeof(path), state->config.output_path, "command.json");
-    FILE* f = fopen(path, "rb");
-    if (!f) {
-        return 0;
-    }
-    char buf[256];
-    size_t n = fread(buf, 1, sizeof(buf) - 1u, f);
-    fclose(f);
-    buf[n] = '\0';
-    unlink(path);
-
-    const char* key = "\"command\"";
-    char* p = strstr(buf, key);
+static int parse_string_field(const char* json, const char* field, char* out, size_t out_size) {
+    out[0] = '\0';
+    char key[64];
+    snprintf(key, sizeof(key), "\"%s\"", field);
+    char* p = strstr(json, key);
     if (!p) {
         return 0;
     }
@@ -38,15 +28,37 @@ int read_command(agent_state* state, char* command, size_t command_size) {
         return 0;
     }
     size_t len = (size_t)(end - p);
-    if (len >= command_size) {
-        len = command_size - 1u;
+    if (len >= out_size) {
+        len = out_size - 1u;
     }
-    memcpy(command, p, len);
-    command[len] = '\0';
+    memcpy(out, p, len);
+    out[len] = '\0';
     return 1;
 }
 
-int handle_command(agent_state* state, const char* command) {
+int read_command(agent_state* state, agent_command* command) {
+    char path[1024];
+    path_join(path, sizeof(path), state->config.output_path, "command.json");
+    FILE* f = fopen(path, "rb");
+    if (!f) {
+        return 0;
+    }
+    char buf[512];
+    size_t n = fread(buf, 1, sizeof(buf) - 1u, f);
+    fclose(f);
+    buf[n] = '\0';
+    unlink(path);
+
+    memset(command, 0, sizeof(*command));
+    if (!parse_string_field(buf, "command", command->command, sizeof(command->command))) {
+        return 0;
+    }
+    parse_string_field(buf, "series", command->series, sizeof(command->series));
+    return 1;
+}
+
+int handle_command(agent_state* state, const agent_command* request) {
+    const char* command = request->command;
     if (strcmp(command, "network_offline") == 0) {
         state->network_online = 0;
         set_last_command(state, command, "ok", "Связь потеряна.", 0);
@@ -101,9 +113,13 @@ int handle_command(agent_state* state, const char* command) {
             add_event(state, "export", "CSV нельзя выгрузить без связи.");
             return TSEDGE_OK;
         }
-        return export_csv(state);
+        return export_csv(state, request->series[0] ? request->series : "air.temperature");
     } else if (strcmp(command, "verify_db") == 0) {
         return verify_db(state);
+    } else if (strcmp(command, "create_debug_series") == 0) {
+        return create_debug_series(state);
+    } else if (strcmp(command, "delete_debug_series") == 0) {
+        return delete_debug_series(state);
     } else if (strcmp(command, "reset_demo") == 0) {
         int rc = reset_demo(state);
         if (rc == TSEDGE_OK) {

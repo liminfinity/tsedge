@@ -15,8 +15,8 @@ export async function GET() {
       return NextResponse.json({ error: "CSV ещё не готов." }, { status: 404 });
     }
 
-    const filename = parsed.data.export.last_file;
-    if (!isSafeCsvFilename(filename)) {
+    const filename = path.basename(parsed.data.export.last_file);
+    if (filename !== parsed.data.export.last_file || !isSafeCsvFilename(filename)) {
       return NextResponse.json({ error: "Некорректное имя CSV-файла." }, { status: 400 });
     }
 

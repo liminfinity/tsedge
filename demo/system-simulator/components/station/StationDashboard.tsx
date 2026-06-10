@@ -49,7 +49,7 @@ export function StationDashboard({
             pending={pendingCommand === "export_csv"}
             message={commandMessage}
             error={commandError}
-            onExport={() => onCommand("export_csv")}
+            onExport={(series) => onCommand("export_csv", series)}
           />
         </div>
       </section>

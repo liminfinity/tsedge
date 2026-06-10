@@ -7,7 +7,7 @@ export type StationSample = {
   values: Record<string, number>;
 };
 
-export type StationCommandHandler = (command: DemoCommand) => Promise<void>;
+export type StationCommandHandler = (command: DemoCommand, series?: string) => Promise<void>;
 
 export type StationPanelProps = {
   state: LiveState;

@@ -1,5 +1,7 @@
 # TSEdge
 
+![CI](https://github.com/liminfinity/tsedge/actions/workflows/ci.yml/badge.svg)
+
 TSEdge is a small embedded C11 time-series storage library for Linux edge
 devices. Applications include `tsedge.h`, link with `libtsedge`, and call the
 API directly. It is not a server and does not implement SQL, networking, MQTT,
@@ -24,6 +26,11 @@ The build produces:
 - `tsedge_demo`
 - `tsedge_bench`
 - `tsedge_tests`
+
+## CI
+
+The project is checked on Ubuntu with GCC and Clang, on macOS with Clang, and
+with AddressSanitizer/UndefinedBehaviorSanitizer in Debug builds.
 
 ## Release Archive
 
@@ -59,6 +66,7 @@ The first version supports:
 
 - open/close database directory
 - create series
+- delete series
 - list existing series
 - append `(int64 timestamp, double value)` points
 - append batches of `tsedge_point` values
@@ -114,6 +122,18 @@ tsedge_export_csv(db, "motor.temperature", from, to, "temperature.csv");
 `tsedge_flush` writes one series buffer into a segment file.
 `tsedge_flush_all` does the same for every series. Empty buffers are not an
 error.
+
+Series can be deleted with their metadata and segment files:
+
+```c
+int rc = tsedge_delete_series(db, "motor.temperature");
+if (rc != TSEDGE_OK) {
+    fprintf(stderr, "failed to delete series\n");
+}
+```
+
+Before deletion, TSEdge flushes buffers through the normal WAL path so pending
+WAL entries cannot restore the deleted series after reopen.
 
 Database files can be checked without modifying them:
 
@@ -253,6 +273,20 @@ rm -rf crash_recovery_demo_db
 The non-zero exit code from `tsedge_crash_writer` is expected: it intentionally
 simulates a crashed process.
 
+## Corruption and Fuzz Tests
+
+TSEdge includes tests for corrupted segment files, invalid block headers,
+damaged WAL entries and deterministic random byte inputs. These tests check that
+malformed storage files return errors instead of crashing the process.
+
+Sanitizer build:
+
+```bash
+cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DTSEDGE_ENABLE_SANITIZERS=ON -DTSEDGE_SEGMENT_MAX_BYTES=8192
+cmake --build build-sanitize
+ctest --test-dir build-sanitize --output-on-failure
+```
+
 ## Панель метеопоста и диагностика TSEdge
 
 Интерактивная демонстрация показывает автономный экологический пост:
@@ -294,6 +328,15 @@ TSEDGE_LIVE_OUTPUT=../../build/ecopost_live_output npm run dev
 Инженерная диагностика доступна на `http://localhost:3000/diagnostics`. Она
 показывает WAL, буфер, сжатые blocks, segment-файлы, очистку старых данных и
 выгрузку CSV.
+
+Диагностическая панель может выгрузить CSV для выбранного ряда. UI пишет в
+`command.json` имя ряда, например:
+
+```json
+{"command":"export_csv","series":"pm25.concentration"}
+```
+
+C-agent вызывает `tsedge_export_csv` и сохраняет файл в output-директории.
 
 ## Deleting Old Data
 

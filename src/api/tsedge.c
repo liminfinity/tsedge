@@ -2,6 +2,7 @@
 #include "csv.h"
 #include "db.h"
 #include "series.h"
+#include "series_delete.h"
 #include "series_list.h"
 #include "series_query.h"
 #include "series_retention.h"
@@ -30,6 +31,17 @@ int tsedge_create_series(tsedge_db* db, const char* name) {
         return rc;
     }
     return tsedge_db_create_series_internal(db, name);
+}
+
+int tsedge_delete_series(tsedge_db* db, const char* series_name) {
+    if (!db) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_series_validate_name(series_name);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    return tsedge_db_delete_series(db, series_name);
 }
 
 int tsedge_append(tsedge_db* db, const char* series_name, int64_t timestamp, double value) {

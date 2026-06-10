@@ -29,8 +29,8 @@ int reopen_db(agent_state* state);
 /* Applies the demo retention policy to selected series. */
 int run_retention(agent_state* state);
 
-/* Flushes buffers and exports a CSV file for download. */
-int export_csv(agent_state* state);
+/* Flushes buffers and exports a selected series to CSV. */
+int export_csv(agent_state* state, const char* series_name);
 
 /* Appends several live steps for diagnostic write commands. */
 int append_steps(agent_state* state, size_t steps, const char* command_name, const char* message);
@@ -52,6 +52,12 @@ int aggregate_min_max_command(agent_state* state);
 
 /* Runs database integrity verification and stores the report. */
 int verify_db(agent_state* state);
+
+/* Creates a small debug series for delete-series diagnostics. */
+int create_debug_series(agent_state* state);
+
+/* Deletes the debug series through the public delete API. */
+int delete_debug_series(agent_state* state);
 
 /* Recreates the demo database and resets live state. */
 int reset_demo(agent_state* state);

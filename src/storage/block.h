@@ -11,6 +11,7 @@
 #define TSEDGE_BLOCK_MAX_POINTS 4096u
 #define TSEDGE_BLOCK_COMPRESSION_DELTA_XOR 1u
 #define TSEDGE_BLOCK_HEADER_SIZE 72u
+#define TSEDGE_BLOCK_MAX_PAYLOAD_BYTES (TSEDGE_BLOCK_MAX_POINTS * 32u)
 
 /*
  * Metadata stored before every compressed block in a segment file.

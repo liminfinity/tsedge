@@ -34,6 +34,20 @@ static int read_exact(FILE* f, void* data, size_t size) {
     return fread(data, 1, size, f) == size ? TSEDGE_OK : TSEDGE_ERR_IO;
 }
 
+static int validate_payload_sizes(const tsedge_block_header* header) {
+    uint64_t expected_payload_size = (uint64_t)header->timestamp_size + (uint64_t)header->value_size;
+    if (header->timestamp_size == 0 ||
+        header->value_size == 0 ||
+        expected_payload_size > UINT32_MAX ||
+        header->payload_size != (uint32_t)expected_payload_size ||
+        header->payload_size > TSEDGE_BLOCK_MAX_PAYLOAD_BYTES ||
+        header->timestamp_size > TSEDGE_BLOCK_MAX_PAYLOAD_BYTES ||
+        header->value_size > TSEDGE_BLOCK_MAX_PAYLOAD_BYTES) {
+        return TSEDGE_ERR_CORRUPT;
+    }
+    return TSEDGE_OK;
+}
+
 int tsedge_block_write_header(FILE* f, const tsedge_block_header* header) {
     if (!f || !header || header->point_count == 0) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
@@ -97,19 +111,14 @@ int tsedge_block_read_header(FILE* f, tsedge_block_header* header, bool* eof) {
      * while aggregate queries can use stored value stats for fully covered
      * blocks.
      */
-    uint64_t expected_payload_size = (uint64_t)header->timestamp_size + (uint64_t)header->value_size;
     if (header->point_count == 0 ||
         header->point_count > TSEDGE_BLOCK_MAX_POINTS ||
         header->min_timestamp > header->max_timestamp ||
-        header->timestamp_size == 0 ||
-        header->value_size == 0 ||
         header->compression_type != TSEDGE_BLOCK_COMPRESSION_DELTA_XOR ||
-        expected_payload_size > UINT32_MAX ||
-        header->payload_size != (uint32_t)expected_payload_size ||
         reserved != 0) {
         return TSEDGE_ERR_CORRUPT;
     }
-    return TSEDGE_OK;
+    return validate_payload_sizes(header);
 }
 
 int tsedge_block_write_payload(FILE* f, const uint8_t* timestamp_data, size_t timestamp_size, const uint8_t* value_data, size_t value_size) {
@@ -130,6 +139,11 @@ int tsedge_block_read_payload(FILE* f, const tsedge_block_header* header, uint8_
 
     *out_timestamp_data = NULL;
     *out_value_data = NULL;
+    int rc = validate_payload_sizes(header);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+
     uint8_t* timestamp_data = (uint8_t*)malloc(header->timestamp_size);
     uint8_t* value_data = (uint8_t*)malloc(header->value_size);
     if (!timestamp_data || !value_data) {
@@ -138,7 +152,7 @@ int tsedge_block_read_payload(FILE* f, const tsedge_block_header* header, uint8_
         return TSEDGE_ERR_NO_MEMORY;
     }
 
-    int rc = read_exact(f, timestamp_data, header->timestamp_size);
+    rc = read_exact(f, timestamp_data, header->timestamp_size);
     if (rc == TSEDGE_OK) {
         rc = read_exact(f, value_data, header->value_size);
     }
@@ -156,6 +170,10 @@ int tsedge_block_read_payload(FILE* f, const tsedge_block_header* header, uint8_
 int tsedge_block_skip_payload(FILE* f, const tsedge_block_header* header) {
     if (!f || !header) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = validate_payload_sizes(header);
+    if (rc != TSEDGE_OK) {
+        return rc;
     }
 #if UINT32_MAX > LONG_MAX
     if ((uint64_t)header->payload_size > (uint64_t)LONG_MAX) {

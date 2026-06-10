@@ -28,9 +28,9 @@ static int run_agent(agent_state* state) {
 
     int elapsed_ms = 0;
     for (;;) {
-        char command[64];
-        if (read_command(state, command, sizeof(command))) {
-            rc = handle_command(state, command);
+        agent_command command;
+        if (read_command(state, &command)) {
+            rc = handle_command(state, &command);
             if (rc != TSEDGE_OK) {
                 add_event(state, "error", tsedge_strerror(rc));
             }

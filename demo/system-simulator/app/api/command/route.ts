@@ -23,8 +23,15 @@ export async function POST(request: Request) {
 
   const finalPath = path.join(dir, "command.json");
   const tmpPath = path.join(dir, "command.json.tmp");
+  const commandPayload: { command: string; created_at: number; series?: string } = {
+    command: parsed.data.command,
+    created_at: Date.now()
+  };
+  if (parsed.data.command === "export_csv" && parsed.data.series) {
+    commandPayload.series = parsed.data.series;
+  }
   const payload = JSON.stringify(
-    { command: parsed.data.command, created_at: Date.now() },
+    commandPayload,
     null,
     2
   );

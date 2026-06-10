@@ -4,7 +4,6 @@ import {
   Calculator,
   CloudAlert,
   Database,
-  Download,
   Layers,
   ListPlus,
   Pause,
@@ -26,6 +25,7 @@ import type { DemoCommand, LiveState } from "@/lib/schema";
 
 const groups: Array<{
   title: string;
+  note?: string;
   actions: Array<{ command: DemoCommand; label: string; icon: LucideIcon; tone?: "danger" | "warn" }>;
 }> = [
   {
@@ -61,10 +61,12 @@ const groups: Array<{
   },
   {
     title: "Обслуживание",
+    note: "debug.temp — отдельный тестовый ряд. Его можно создать, записывать в него точки и удалить.",
     actions: [
       { command: "run_retention", label: "Очистить старые данные", icon: Trash2, tone: "warn" },
-      { command: "export_csv", label: "Выгрузить CSV", icon: Download },
-      { command: "verify_db", label: "Проверить базу", icon: SearchCheck }
+      { command: "verify_db", label: "Проверить базу", icon: SearchCheck },
+      { command: "create_debug_series", label: "Создать тестовый ряд", icon: Database },
+      { command: "delete_debug_series", label: "Удалить тестовый ряд", icon: Trash2, tone: "warn" }
     ]
   },
   {
@@ -134,6 +136,9 @@ export function ControlPanel({
     if (command === "verify_db") {
       return !state.verify.available;
     }
+    if (command === "create_debug_series" || command === "delete_debug_series") {
+      return state.agent.status === "crashed";
+    }
     return false;
   };
 
@@ -147,6 +152,7 @@ export function ControlPanel({
         {groups.map((group) => (
           <div key={group.title}>
             <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">{group.title}</div>
+            {group.note && <div className="mb-2 text-sm leading-5 text-slate-600">{group.note}</div>}
             <div className="grid gap-2 sm:grid-cols-2">
               {group.actions.map(({ command, label, icon: Icon, tone }) => {
                 const isDisabled = disabled(command);

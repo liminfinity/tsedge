@@ -59,6 +59,12 @@ typedef struct {
     size_t recovered_points;
     int csv_ready;
     char last_csv_file[128];
+    int export_last_run;
+    int export_ok;
+    char export_series[128];
+    char export_path[256];
+    size_t export_rows;
+    char export_message[EVENT_TEXT_SIZE];
     int retention_last_run;
     size_t retention_deleted_count;
     char retention_last_deleted[128];

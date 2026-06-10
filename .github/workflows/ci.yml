@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu GCC Release
+            os: ubuntu-latest
+            cc: gcc
+          - name: Ubuntu Clang Release
+            os: ubuntu-latest
+            cc: clang
+          - name: macOS Clang Release
+            os: macos-latest
+            cc: clang
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ubuntu dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc clang
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTSEDGE_SEGMENT_MAX_BYTES=8192
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  debug:
+    name: Ubuntu Clang Debug
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ubuntu dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang
+
+      - name: Configure
+        env:
+          CC: clang
+        run: |
+          cmake -S . -B build-debug \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DTSEDGE_SEGMENT_MAX_BYTES=8192
+
+      - name: Build
+        run: cmake --build build-debug --parallel
+
+      - name: Test
+        run: ctest --test-dir build-debug --output-on-failure
+
+  sanitizers:
+    name: Ubuntu Clang ASan/UBSan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ubuntu dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang
+
+      - name: Configure
+        env:
+          CC: clang
+        run: |
+          cmake -S . -B build-sanitize \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DTSEDGE_ENABLE_SANITIZERS=ON \
+            -DTSEDGE_SEGMENT_MAX_BYTES=8192
+
+      - name: Build
+        run: cmake --build build-sanitize --parallel
+
+      - name: Test
+        run: ctest --test-dir build-sanitize --output-on-failure
