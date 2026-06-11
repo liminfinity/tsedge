@@ -10,8 +10,8 @@ library inside the package. If the bundled library is present, `TSEDGE_LIBRARY`
 is not required. `TSEDGE_LIBRARY` and explicit `lib_path` arguments still take
 priority, so applications can override the bundled library.
 
-The wheel build workflow targets Linux x86_64, macOS arm64 and macOS x86_64.
-Windows wheels are planned separately.
+The wheel build workflow targets Linux x86_64, Linux aarch64, macOS arm64 and
+macOS x86_64. Windows wheels are not included in the current release.
 
 No runtime Python dependencies are required.
 
@@ -144,6 +144,7 @@ The workflow is defined in:
 It builds and tests wheels for:
 
 - Linux x86_64 with `tsedge/native/libtsedge.so`;
+- Linux aarch64 with `tsedge/native/libtsedge.so`;
 - macOS arm64 with `tsedge/native/libtsedge.dylib`;
 - macOS x86_64 with `tsedge/native/libtsedge.dylib`.
 
@@ -403,7 +404,8 @@ deactivate
 
 ## Limitations
 
-- The bundled wheel workflow targets Linux x86_64, macOS arm64 and macOS x86_64.
-- Windows wheels are planned separately.
+- The bundled wheel workflow targets Linux x86_64, Linux aarch64, macOS arm64
+  and macOS x86_64.
+- Windows wheels are not included in the current release.
 - `read_range` returns a Python list, not a lazy iterator.
 - NumPy arrays are not supported in the first version.
