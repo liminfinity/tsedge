@@ -4,7 +4,7 @@ import os
 import platform
 import sys
 
-from setuptools import setup
+from setuptools import Distribution, setup
 
 try:
     from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
@@ -42,4 +42,9 @@ class bdist_wheel(_bdist_wheel):
         return "py3", "none", _normalize_macos_platform_tag(plat)
 
 
-setup(cmdclass={"bdist_wheel": bdist_wheel})
+class BinaryDistribution(Distribution):
+    def has_ext_modules(self):
+        return True
+
+
+setup(cmdclass={"bdist_wheel": bdist_wheel}, distclass=BinaryDistribution)
