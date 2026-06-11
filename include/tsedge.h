@@ -17,8 +17,20 @@ extern "C" {
  */
 typedef struct tsedge_db tsedge_db;
 
+/**
+ * Opaque handle for a loaded time series.
+ *
+ * Handles are owned by the database. They stay valid until the series is
+ * deleted or the database is closed.
+ */
+typedef struct tsedge_series_handle tsedge_series_handle;
+
 #ifndef TSEDGE_MAX_SERIES_NAME
 #define TSEDGE_MAX_SERIES_NAME 255u
+#endif
+
+#ifndef TSEDGE_MAX_WINDOW_AGGREGATES
+#define TSEDGE_MAX_WINDOW_AGGREGATES 1000000u
 #endif
 
 /**
@@ -34,7 +46,8 @@ typedef enum {
     TSEDGE_ERR_NO_MEMORY = -3,
     TSEDGE_ERR_NOT_FOUND = -4,
     TSEDGE_ERR_CORRUPT = -5,
-    TSEDGE_ERR_INTERNAL = -6
+    TSEDGE_ERR_INTERNAL = -6,
+    TSEDGE_ERR_QUOTA_EXCEEDED = -7
 } tsedge_status;
 
 /**
@@ -49,6 +62,19 @@ typedef enum {
 } tsedge_agg_type;
 
 /**
+ * WAL durability policy for append operations.
+ *
+ * FAST buffers WAL entries in memory for maximum throughput. BALANCED flushes
+ * the WAL buffer more often. STRICT flushes the WAL on every append or batch
+ * and preserves the strongest crash recovery behavior.
+ */
+typedef enum {
+    TSEDGE_DURABILITY_FAST = 0,
+    TSEDGE_DURABILITY_BALANCED = 1,
+    TSEDGE_DURABILITY_STRICT = 2
+} tsedge_durability_mode;
+
+/**
  * One time-series data point.
  *
  * The first prototype stores exactly one int64 timestamp and one double value
@@ -58,6 +84,21 @@ typedef struct {
     int64_t timestamp;
     double value;
 } tsedge_point;
+
+/**
+ * Aggregate values for one non-empty half-open time window.
+ *
+ * Windows use [window_start, window_end) semantics: a point at window_end
+ * belongs to the next window.
+ */
+typedef struct {
+    int64_t window_start;
+    int64_t window_end;
+    uint64_t count;
+    double min;
+    double max;
+    double avg;
+} tsedge_window_aggregate;
 
 /**
  * Lightweight metadata summary for one time series.
@@ -152,6 +193,38 @@ int tsedge_close(tsedge_db* db);
 int tsedge_create_series(tsedge_db* db, const char* name);
 
 /**
+ * Sets the WAL durability policy for subsequent appends.
+ *
+ * The default is TSEDGE_DURABILITY_STRICT. Switching modes flushes any pending
+ * WAL buffer first.
+ */
+int tsedge_set_durability(tsedge_db* db, tsedge_durability_mode mode);
+
+/**
+ * Sets a soft disk quota for database files.
+ *
+ * max_bytes == 0 disables the quota. When the database exceeds the limit,
+ * TSEdge removes old sealed segment files. Active segments and the last segment
+ * of every series are kept.
+ */
+int tsedge_set_disk_quota(tsedge_db* db, uint64_t max_bytes);
+
+/**
+ * Returns the current soft disk quota in bytes.
+ *
+ * A value of 0 means that the quota is disabled.
+ */
+int tsedge_get_disk_quota(tsedge_db* db, uint64_t* out_max_bytes);
+
+/**
+ * Runs disk quota cleanup immediately.
+ *
+ * If the database is still above the limit and no more segment files can be
+ * safely removed, returns TSEDGE_ERR_QUOTA_EXCEEDED.
+ */
+int tsedge_enforce_disk_quota(tsedge_db* db);
+
+/**
  * Deletes a series and removes its metadata, segments, buffers and index entries.
  *
  * Pending WAL entries are cleared through a flush before the series directory is
@@ -170,6 +243,30 @@ int tsedge_delete_series(tsedge_db* db, const char* series_name);
  * Returns TSEDGE_OK on success or a negative error code on failure.
  */
 int tsedge_append(tsedge_db* db, const char* series_name, int64_t timestamp, double value);
+
+/**
+ * Finds a series once and returns a database-owned handle for faster appends.
+ *
+ * The caller must not free the handle. It becomes invalid after deleting the
+ * series or closing the database.
+ */
+int tsedge_get_series_handle(tsedge_db* db, const char* series_name, tsedge_series_handle** out_handle);
+
+/**
+ * Appends one point through a previously resolved series handle.
+ *
+ * This avoids repeated string lookup of the series name and uses the same
+ * WAL-before-buffer write path as tsedge_append.
+ */
+int tsedge_append_handle(tsedge_db* db, tsedge_series_handle* handle, int64_t timestamp, double value);
+
+/**
+ * Appends multiple points through a previously resolved series handle.
+ *
+ * Passing count == 0 is a no-op. The handle follows the same lifetime rules as
+ * tsedge_get_series_handle.
+ */
+int tsedge_append_batch_handle(tsedge_db* db, tsedge_series_handle* handle, const tsedge_point* points, size_t count);
 
 /**
  * Appends multiple points to an existing series.
@@ -282,6 +379,30 @@ int tsedge_aggregate(
     tsedge_agg_type type,
     double* out_result
 );
+
+/**
+ * Computes min/max/avg/count for non-empty half-open windows.
+ *
+ * The query range is [start_time, end_time). Empty windows are omitted from the
+ * returned array. The caller must free the array with
+ * tsedge_free_window_aggregates.
+ */
+int tsedge_aggregate_windowed(
+    tsedge_db* db,
+    const char* series_name,
+    int64_t start_time,
+    int64_t end_time,
+    int64_t window_size,
+    tsedge_window_aggregate** out_windows,
+    size_t* out_count
+);
+
+/**
+ * Releases window aggregates allocated by tsedge_aggregate_windowed.
+ *
+ * Passing NULL is safe.
+ */
+void tsedge_free_window_aggregates(tsedge_window_aggregate* windows);
 
 /**
  * Exports points from an inclusive timestamp range to a CSV file.

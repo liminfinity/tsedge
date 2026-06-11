@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "db_quota.h"
 #include "series.h"
 #include "db.h"
 #include "segment.h"
@@ -116,8 +117,13 @@ int tsedge_series_flush(tsedge_db* db, tsedge_series* series, bool update_wal) {
      * A flush is the point where buffered rows become an immutable compressed
      * block on disk. After that, WAL can forget the flushed rows.
      */
+    int rc = tsedge_wal_flush(db);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+
     uint64_t block_size = 0;
-    int rc = tsedge_segment_estimate_block_size(series->buffer, series->buffer_count, &block_size);
+    rc = tsedge_segment_estimate_block_size(series->buffer, series->buffer_count, &block_size);
     if (rc != TSEDGE_OK) {
         return rc;
     }
@@ -147,7 +153,14 @@ int tsedge_series_flush(tsedge_db* db, tsedge_series* series, bool update_wal) {
     }
 
     series->buffer_count = 0;
-    return update_wal ? tsedge_wal_truncate_to_buffers(db) : TSEDGE_OK;
+    if (!update_wal) {
+        return TSEDGE_OK;
+    }
+    rc = tsedge_wal_truncate_to_buffers(db);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    return tsedge_db_enforce_disk_quota(db);
 }
 
 static int add_point_to_buffer(tsedge_db* db, tsedge_series* series, const tsedge_point* point, bool update_wal) {

@@ -13,6 +13,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 option(TSEDGE_WAL_FSYNC "Flush and fsync WAL entries before append returns" OFF)
 option(TSEDGE_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+set(TSEDGE_BLOCK_MAX_POINTS "16384" CACHE STRING "Maximum number of points per compressed block")
 set(TSEDGE_SEGMENT_MAX_BYTES "" CACHE STRING "Override segment rotation limit in bytes")
 
 set(TSEDGE_PUBLIC_HEADERS
@@ -23,6 +24,7 @@ set(TSEDGE_PRIVATE_HEADERS
     src/compression/bitstream.h
     src/compression/compress.h
     src/core/db.h
+    src/core/db_quota.h
     src/core/series.h
     src/core/series_delete.h
     src/core/series_index.h
@@ -46,6 +48,7 @@ set(TSEDGE_SOURCES
     src/compression/bitstream.c
     src/compression/compress.c
     src/core/db.c
+    src/core/db_quota.c
     src/core/series.c
     src/core/series_delete.c
     src/core/series_index.c
@@ -71,12 +74,15 @@ set(TSEDGE_TEST_SOURCES
     tests/test_db.c
     tests/test_delete_series.c
     tests/test_flush.c
+    tests/test_handles.c
     tests/test_list_series.c
+    tests/test_quota.c
     tests/test_retention.c
     tests/test_recovery.c
     tests/test_segments.c
     tests/test_stats.c
     tests/test_verify.c
+    tests/test_window.c
 )
 
 set(TSEDGE_DEMO_SOURCES
@@ -104,6 +110,14 @@ set(TSEDGE_RECOVER_CHECK_SOURCES
 
 set(TSEDGE_BENCH_SOURCES
     bench/tsedge_bench.c
+)
+
+set(TSEDGE_WRITE_BENCH_SOURCES
+    bench/write_path_bench.c
+)
+
+set(TSEDGE_READ_BENCH_SOURCES
+    bench/read_path_bench.c
 )
 
 set(TSEDGE_FILE_BENCH_SOURCES
@@ -217,7 +231,12 @@ if(TSEDGE_SEGMENT_MAX_BYTES)
     target_compile_definitions(tsedge_static PRIVATE TSEDGE_SEGMENT_MAX_BYTES=${TSEDGE_SEGMENT_MAX_BYTES})
 endif()
 
-target_compile_definitions(tsedge_testlib PRIVATE TSEDGE_SEGMENT_MAX_BYTES=8192)
+target_compile_definitions(tsedge PRIVATE TSEDGE_BLOCK_MAX_POINTS=${TSEDGE_BLOCK_MAX_POINTS})
+target_compile_definitions(tsedge_static PRIVATE TSEDGE_BLOCK_MAX_POINTS=${TSEDGE_BLOCK_MAX_POINTS})
+target_compile_definitions(tsedge_testlib PRIVATE
+    TSEDGE_BLOCK_MAX_POINTS=${TSEDGE_BLOCK_MAX_POINTS}
+    TSEDGE_SEGMENT_MAX_BYTES=8192
+)
 
 add_executable(tsedge_demo ${TSEDGE_DEMO_SOURCES})
 target_link_libraries(tsedge_demo PRIVATE tsedge)
@@ -244,6 +263,15 @@ add_executable(tsedge_bench ${TSEDGE_BENCH_SOURCES})
 target_link_libraries(tsedge_bench PRIVATE tsedge)
 tsedge_link_math(tsedge_bench)
 
+add_executable(tsedge_write_bench ${TSEDGE_WRITE_BENCH_SOURCES})
+target_link_libraries(tsedge_write_bench PRIVATE tsedge)
+tsedge_link_math(tsedge_write_bench)
+
+add_executable(tsedge_read_bench ${TSEDGE_READ_BENCH_SOURCES})
+target_link_libraries(tsedge_read_bench PRIVATE tsedge)
+target_include_directories(tsedge_read_bench PRIVATE ${TSEDGE_INTERNAL_INCLUDE_DIRS})
+tsedge_link_math(tsedge_read_bench)
+
 add_executable(file_bench ${TSEDGE_FILE_BENCH_SOURCES})
 tsedge_link_math(file_bench)
 
@@ -263,6 +291,7 @@ enable_testing()
 add_executable(tsedge_tests ${TSEDGE_TEST_SOURCES})
 target_link_libraries(tsedge_tests PRIVATE tsedge_testlib)
 target_include_directories(tsedge_tests PRIVATE ${TSEDGE_INTERNAL_INCLUDE_DIRS})
+target_compile_definitions(tsedge_tests PRIVATE TSEDGE_BLOCK_MAX_POINTS=${TSEDGE_BLOCK_MAX_POINTS})
 tsedge_link_math(tsedge_tests)
 
 add_test(NAME tsedge_tests COMMAND $<TARGET_FILE:tsedge_tests>)
@@ -285,6 +314,8 @@ foreach(TSEDGE_SANITIZER_TARGET
     tsedge_crash_writer
     tsedge_recover_check
     tsedge_bench
+    tsedge_write_bench
+    tsedge_read_bench
     file_bench
     sqlite_bench
     tsedge_tests
@@ -300,7 +331,7 @@ install(TARGETS tsedge tsedge_static
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(TARGETS tsedge_demo tsedge_ecopost_agent tsedge_bench file_bench
+install(TARGETS tsedge_demo tsedge_ecopost_agent tsedge_bench tsedge_write_bench tsedge_read_bench file_bench
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

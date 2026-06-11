@@ -10,7 +10,10 @@
 #define HISTORY_POINTS 9000u
 #define BATCH_SIZE 1024u
 #define DIAG_BATCH_SIZE 512u
-#define BUFFER_CAPACITY 4096u
+#ifndef TSEDGE_BLOCK_MAX_POINTS
+#define TSEDGE_BLOCK_MAX_POINTS 16384u
+#endif
+#define BUFFER_CAPACITY TSEDGE_BLOCK_MAX_POINTS
 
 typedef struct {
     const char* name;

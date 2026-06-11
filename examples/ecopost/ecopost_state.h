@@ -46,7 +46,27 @@ typedef struct {
 } storage_totals;
 
 typedef struct {
+    int last_run;
+    int ok;
+    char series[128];
+    int64_t window_size;
+    size_t window_count;
+    size_t source_points_estimate;
+    double downsample_ratio;
+    double query_seconds;
+    double min_value;
+    double max_value;
+    double avg_of_avgs;
+    double weighted_avg;
+    tsedge_window_aggregate first;
+    tsedge_window_aggregate last;
+    char message[EVENT_TEXT_SIZE];
+} window_aggregate_state;
+
+typedef struct {
     tsedge_db* db;
+    tsedge_series_handle* sensor_handles[SERIES_COUNT];
+    tsedge_series_handle* debug_handle;
     agent_config config;
     size_t tick;
     int running;
@@ -71,6 +91,7 @@ typedef struct {
     int verify_last_run;
     int verify_ok;
     tsedge_verify_report verify_report;
+    window_aggregate_state window_aggregate;
     last_command_state last_command;
     last_query_state last_query;
     double last_values[SERIES_COUNT];

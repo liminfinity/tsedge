@@ -3,8 +3,33 @@
 #include "ecopost_ops.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+static int parse_int64_field(const char* json, const char* field, int64_t* out_value) {
+    char key[64];
+    snprintf(key, sizeof(key), "\"%s\"", field);
+    char* p = strstr(json, key);
+    if (!p) {
+        return 0;
+    }
+    p = strchr(p, ':');
+    if (!p) {
+        return 0;
+    }
+    ++p;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        ++p;
+    }
+    char* end = NULL;
+    long long value = strtoll(p, &end, 10);
+    if (end == p) {
+        return 0;
+    }
+    *out_value = (int64_t)value;
+    return 1;
+}
 
 static int parse_string_field(const char* json, const char* field, char* out, size_t out_size) {
     out[0] = '\0';
@@ -54,6 +79,8 @@ int read_command(agent_state* state, agent_command* command) {
         return 0;
     }
     parse_string_field(buf, "series", command->series, sizeof(command->series));
+    command->window_size_set = parse_int64_field(buf, "window_size", &command->window_size);
+    command->points_set = parse_int64_field(buf, "points", &command->points);
     return 1;
 }
 
@@ -95,6 +122,8 @@ int handle_command(agent_state* state, const agent_command* request) {
         return append_steps(state, 100u, command, "Добавлено 600 точек.");
     } else if (strcmp(command, "append_1000") == 0) {
         return append_steps(state, 1000u, command, "Добавлено 6000 точек.");
+    } else if (strcmp(command, "append_custom") == 0) {
+        return append_custom_points(state, request->points_set ? request->points : 10000LL);
     } else if (strcmp(command, "append_batch") == 0) {
         return append_batch_command(state);
     } else if (strcmp(command, "flush_all") == 0) {
@@ -102,9 +131,11 @@ int handle_command(agent_state* state, const agent_command* request) {
     } else if (strcmp(command, "read_last_range") == 0) {
         return read_last_range_command(state);
     } else if (strcmp(command, "aggregate_avg") == 0) {
-        return aggregate_avg_command(state);
+        return aggregate_avg_command(state, request->series[0] ? request->series : "air.temperature");
     } else if (strcmp(command, "aggregate_min_max") == 0) {
-        return aggregate_min_max_command(state);
+        return aggregate_min_max_command(state, request->series[0] ? request->series : "pm25.concentration");
+    } else if (strcmp(command, "window_aggregate") == 0) {
+        return window_aggregate_command(state, request->series[0] ? request->series : "air.temperature", request->window_size, request->window_size_set);
     } else if (strcmp(command, "run_retention") == 0) {
         return run_retention(state);
     } else if (strcmp(command, "export_csv") == 0) {

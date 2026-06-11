@@ -35,6 +35,9 @@ int export_csv(agent_state* state, const char* series_name);
 /* Appends several live steps for diagnostic write commands. */
 int append_steps(agent_state* state, size_t steps, const char* command_name, const char* message);
 
+/* Appends an exact number of diagnostic points across available demo series. */
+int append_custom_points(agent_state* state, int64_t requested_points);
+
 /* Runs a public batch append command for all series. */
 int append_batch_command(agent_state* state);
 
@@ -44,11 +47,14 @@ int flush_all_command(agent_state* state);
 /* Reads the latest simulated time window and records the result. */
 int read_last_range_command(agent_state* state);
 
-/* Computes the latest average temperature diagnostic query. */
-int aggregate_avg_command(agent_state* state);
+/* Computes the latest average diagnostic query for one series. */
+int aggregate_avg_command(agent_state* state, const char* series_name);
 
-/* Computes the latest min/max diagnostic query. */
-int aggregate_min_max_command(agent_state* state);
+/* Computes the latest min/max diagnostic query for one series. */
+int aggregate_min_max_command(agent_state* state, const char* series_name);
+
+/* Computes compact downsampled window aggregates for one series. */
+int window_aggregate_command(agent_state* state, const char* series_name, int64_t requested_window_size, int has_window_size);
 
 /* Runs database integrity verification and stores the report. */
 int verify_db(agent_state* state);

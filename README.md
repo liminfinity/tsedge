@@ -19,6 +19,9 @@ ctest
 
 More build details are in [docs/build.md](docs/build.md).
 
+The default compressed block size is 16384 points. It can be overridden at
+build time with `-DTSEDGE_BLOCK_MAX_POINTS=<N>`.
+
 The build produces:
 
 - `libtsedge.so`
@@ -26,6 +29,12 @@ The build produces:
 - `tsedge_demo`
 - `tsedge_bench`
 - `tsedge_tests`
+
+Block-size tuning can be reproduced with:
+
+```bash
+./bench/run_block_size_benchmarks.sh
+```
 
 ## CI
 
@@ -67,12 +76,14 @@ The first version supports:
 - open/close database directory
 - create series
 - delete series
+- set a soft disk quota for old segment cleanup
 - list existing series
 - append `(int64 timestamp, double value)` points
 - append batches of `tsedge_point` values
 - inspect lightweight per-series statistics
 - read points by inclusive time range
 - aggregate min/max/sum/avg/count by range
+- aggregate by time windows for graph downsampling
 - export a range to CSV
 
 Function-level API notes are in [docs/api.md](docs/api.md).
@@ -135,6 +146,20 @@ if (rc != TSEDGE_OK) {
 Before deletion, TSEdge flushes buffers through the normal WAL path so pending
 WAL entries cannot restore the deleted series after reopen.
 
+Database size can be limited with a soft runtime quota:
+
+```c
+tsedge_set_disk_quota(db, 128ull * 1024ull * 1024ull);
+int rc = tsedge_enforce_disk_quota(db);
+if (rc == TSEDGE_ERR_QUOTA_EXCEEDED) {
+    fprintf(stderr, "quota is too small for safe cleanup\n");
+}
+```
+
+Quota cleanup removes only old sealed `segment_*.tse` files. It does not delete
+active segments, the last segment of any series, WAL, metadata, or arbitrary
+files in the database directory.
+
 Database files can be checked without modifying them:
 
 ```c
@@ -169,6 +194,40 @@ The statistics are collected from the in-memory block index, the current buffer
 and all segment file sizes. They also include compression stats: estimated raw
 size, bytes stored in segment files, compression ratio and average bytes per
 point.
+
+Window aggregation returns compact buckets for charts without reading every raw
+point:
+
+```c
+tsedge_window_aggregate* windows = NULL;
+size_t window_count = 0;
+
+tsedge_aggregate_windowed(
+    db,
+    "motor.temperature",
+    1710000000000LL,
+    1710003600000LL,
+    60000,
+    &windows,
+    &window_count
+);
+
+for (size_t i = 0; i < window_count; ++i) {
+    printf("%lld..%lld count=%llu avg=%f min=%f max=%f\n",
+           (long long)windows[i].window_start,
+           (long long)windows[i].window_end,
+           (unsigned long long)windows[i].count,
+           windows[i].avg,
+           windows[i].min,
+           windows[i].max);
+}
+
+tsedge_free_window_aggregates(windows);
+```
+
+Windows are half-open (`[start, end)`) and empty windows are omitted. This is
+used by dashboards to downsample large raw ranges into a small number of
+display buckets.
 
 Old data can be removed at segment-file granularity:
 
@@ -412,6 +471,8 @@ larger than a safe incremental change.
 ```
 
 Benchmark methodology is described in [docs/benchmarking.md](docs/benchmarking.md).
+Read-path benchmarks can be run with `bench/run_read_benchmarks.sh`.
+Block-size tuning can be run with `bench/run_block_size_benchmarks.sh`.
 
 The benchmark emits copy-friendly lines for `smooth`, `noisy`, `step`,
 `constant`, and `irregular_timestamps` datasets. For TSEdge it includes both

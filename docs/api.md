@@ -69,6 +69,54 @@ Example:
 tsedge_create_series(db, "motor.temperature");
 ```
 
+## `tsedge_set_durability`
+
+Sets how aggressively TSEdge flushes WAL entries.
+
+- `TSEDGE_DURABILITY_FAST`: highest throughput. WAL entries may stay in memory
+  until the WAL buffer fills, flush runs, or the database closes. A process crash
+  may lose the latest buffered WAL entries.
+- `TSEDGE_DURABILITY_BALANCED`: buffered WAL with a smaller flush threshold.
+  This is a compromise between write throughput and recovery freshness.
+- `TSEDGE_DURABILITY_STRICT`: default mode. WAL is flushed on every append or
+  batch, so crash recovery sees accepted points that reached the append call.
+
+`tsedge_flush`, `tsedge_flush_all` and `tsedge_close` flush the WAL buffer.
+
+Example:
+
+```c
+tsedge_set_durability(db, TSEDGE_DURABILITY_FAST);
+```
+
+## Disk quota
+
+TSEdge can enforce a soft disk quota for database files:
+
+```c
+tsedge_set_disk_quota(db, 128ull * 1024ull * 1024ull);
+tsedge_enforce_disk_quota(db);
+```
+
+The quota is a runtime setting on the opened `tsedge_db`; it is not stored in
+`manifest.txt`. Passing `0` to `tsedge_set_disk_quota` disables the limit.
+
+When the database is larger than the configured limit, TSEdge deletes the
+oldest sealed `segment_*.tse` files first. Active segment files, the last
+segment file of every series, `manifest.txt`, `wal.log`, `metadata.txt`, and
+non-segment files are not removed by quota cleanup.
+
+The limit is soft: the database may remain larger than the quota when only
+active or last segment files are left. In that case
+`tsedge_enforce_disk_quota` returns `TSEDGE_ERR_QUOTA_EXCEEDED`.
+
+```c
+uint64_t quota = 0;
+tsedge_get_disk_quota(db, &quota);
+```
+
+Quota cleanup is also attempted after flush operations and database close.
+
 ## `tsedge_append`
 
 Appends one point to an existing series. A point contains an `int64_t`
@@ -93,6 +141,27 @@ Example:
 ```c
 tsedge_append(db, "motor.temperature", 1710000000000LL, 72.4);
 ```
+
+## Fast append with series handles
+
+For frequent writes to the same series, resolve the series once and append
+through a handle. This avoids repeated lookup by string name.
+
+The handle is owned by the database. Do not free it. It is valid until the
+series is deleted or the database is closed.
+
+```c
+tsedge_series_handle* temperature = NULL;
+tsedge_get_series_handle(db, "motor.temperature", &temperature);
+
+for (int64_t i = 0; i < 1000000; ++i) {
+    tsedge_append_handle(db, temperature, i, 20.0);
+}
+```
+
+Use `tsedge_append_batch_handle` when points are already available as an array.
+The string-based `tsedge_append` and `tsedge_append_batch` remain available and
+are simpler for occasional writes.
 
 ## `tsedge_append_batch`
 
@@ -487,6 +556,64 @@ Example:
 double avg = 0.0;
 tsedge_aggregate(db, "motor.temperature", 1710000000000LL,
                  1710000100000LL, TSEDGE_AGG_AVG, &avg);
+```
+
+## `tsedge_aggregate_windowed`
+
+Computes `count`, `min`, `max` and `avg` for non-empty time windows. This is
+intended for graph downsampling and overview queries where the caller needs a
+compact representation instead of every raw point.
+
+Window bounds are half-open: `[window_start, window_end)`. A point exactly at
+`window_end` belongs to the next window. Empty windows are omitted from the
+returned array.
+
+Parameters:
+
+- `db`: database handle.
+- `series_name`: existing series name.
+- `start_time`: inclusive query start.
+- `end_time`: exclusive query end.
+- `window_size`: positive window width in timestamp units.
+- `out_windows`: receives an allocated array of non-empty windows.
+- `out_count`: receives the number of returned windows.
+
+Returns:
+
+- `TSEDGE_OK` on success. If no data matches, `*out_windows == NULL` and
+  `*out_count == 0`.
+- `TSEDGE_ERR_NOT_FOUND` if the series does not exist.
+- Other error statuses for invalid arguments, I/O failures, memory allocation
+  failures, or corrupt data.
+
+The returned array must be released with `tsedge_free_window_aggregates`.
+
+Example:
+
+```c
+tsedge_window_aggregate* windows = NULL;
+size_t count = 0;
+
+int rc = tsedge_aggregate_windowed(
+    db,
+    "motor.temperature",
+    1710000000000LL,
+    1710003600000LL,
+    60000,
+    &windows,
+    &count
+);
+
+if (rc == TSEDGE_OK) {
+    for (size_t i = 0; i < count; ++i) {
+        printf("%lld,%lld,%llu,%.3f\n",
+               (long long)windows[i].window_start,
+               (long long)windows[i].window_end,
+               (unsigned long long)windows[i].count,
+               windows[i].avg);
+    }
+    tsedge_free_window_aggregates(windows);
+}
 ```
 
 ## `tsedge_export_csv`

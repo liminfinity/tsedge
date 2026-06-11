@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "db_quota.h"
 #include "db.h"
 #include "wal.h"
 
@@ -64,6 +65,20 @@ static int ensure_series_capacity(tsedge_db* db) {
     return TSEDGE_OK;
 }
 
+static int ensure_handle_capacity(tsedge_db* db) {
+    if (db->handle_count < db->handle_capacity) {
+        return TSEDGE_OK;
+    }
+    size_t next = db->handle_capacity == 0 ? 4u : db->handle_capacity * 2u;
+    tsedge_series_handle** resized = (tsedge_series_handle**)realloc(db->handles, next * sizeof(*db->handles));
+    if (!resized) {
+        return TSEDGE_ERR_NO_MEMORY;
+    }
+    db->handles = resized;
+    db->handle_capacity = next;
+    return TSEDGE_OK;
+}
+
 tsedge_series* tsedge_db_find_series(tsedge_db* db, const char* name) {
     for (size_t i = 0; i < db->series_count; ++i) {
         if (strcmp(db->series[i].name, name) == 0) {
@@ -86,8 +101,79 @@ int tsedge_db_add_series_object(tsedge_db* db, const char* name, int create_dir)
     if (rc != TSEDGE_OK) {
         return rc;
     }
+    db->series[db->series_count].generation = ++db->next_series_generation;
     ++db->series_count;
     return TSEDGE_OK;
+}
+
+int tsedge_db_get_series_handle(tsedge_db* db, const char* series_name, tsedge_series_handle** out_handle) {
+    if (!db || !series_name || !out_handle) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    *out_handle = NULL;
+
+    for (size_t i = 0; i < db->series_count; ++i) {
+        tsedge_series* series = &db->series[i];
+        if (strcmp(series->name, series_name) != 0) {
+            continue;
+        }
+
+        for (size_t j = 0; j < db->handle_count; ++j) {
+            tsedge_series_handle* handle = db->handles[j];
+            if (handle->generation == series->generation && strcmp(handle->series_name, series_name) == 0) {
+                handle->series_index = i;
+                *out_handle = handle;
+                return TSEDGE_OK;
+            }
+        }
+
+        int rc = ensure_handle_capacity(db);
+        if (rc != TSEDGE_OK) {
+            return rc;
+        }
+        tsedge_series_handle* handle = (tsedge_series_handle*)calloc(1, sizeof(*handle));
+        if (!handle) {
+            return TSEDGE_ERR_NO_MEMORY;
+        }
+        handle->db = db;
+        handle->series_index = i;
+        handle->generation = series->generation;
+        snprintf(handle->series_name, sizeof(handle->series_name), "%s", series_name);
+        db->handles[db->handle_count++] = handle;
+        *out_handle = handle;
+        return TSEDGE_OK;
+    }
+
+    return TSEDGE_ERR_NOT_FOUND;
+}
+
+int tsedge_db_resolve_series_handle(tsedge_db* db, tsedge_series_handle* handle, tsedge_series** out_series) {
+    if (!db || !handle || !out_series) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    *out_series = NULL;
+    if (handle->db != db) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+
+    if (handle->series_index < db->series_count) {
+        tsedge_series* series = &db->series[handle->series_index];
+        if (series->generation == handle->generation) {
+            *out_series = series;
+            return TSEDGE_OK;
+        }
+    }
+
+    for (size_t i = 0; i < db->series_count; ++i) {
+        tsedge_series* series = &db->series[i];
+        if (series->generation == handle->generation && strcmp(series->name, handle->series_name) == 0) {
+            handle->series_index = i;
+            *out_series = series;
+            return TSEDGE_OK;
+        }
+    }
+
+    return TSEDGE_ERR_NOT_FOUND;
 }
 
 int tsedge_db_rewrite_manifest(tsedge_db* db) {
@@ -156,6 +242,11 @@ void tsedge_db_free_memory(tsedge_db* db) {
     for (size_t i = 0; i < db->series_count; ++i) {
         tsedge_series_free(&db->series[i]);
     }
+    for (size_t i = 0; i < db->handle_count; ++i) {
+        free(db->handles[i]);
+    }
+    free(db->handles);
+    free(db->wal_buffer);
     free(db->series);
     free(db->path);
     free(db->series_dir);
@@ -174,7 +265,11 @@ int tsedge_db_flush_all(tsedge_db* db) {
             return rc;
         }
     }
-    return tsedge_wal_truncate_to_buffers(db);
+    int rc = tsedge_wal_truncate_to_buffers(db);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    return tsedge_db_enforce_disk_quota(db);
 }
 
 int tsedge_db_open_internal(const char* path, tsedge_db** out_db) {
@@ -195,6 +290,7 @@ int tsedge_db_open_internal(const char* path, tsedge_db** out_db) {
     db->path = xstrdup(path);
     db->series_dir = tsedge_path_join(path, "series");
     db->wal_path = tsedge_path_join(path, "wal.log");
+    db->durability = TSEDGE_DURABILITY_STRICT;
     if (!db->path || !db->series_dir || !db->wal_path) {
         tsedge_db_free_memory(db);
         return TSEDGE_ERR_NO_MEMORY;
@@ -238,4 +334,18 @@ int tsedge_db_create_series_internal(tsedge_db* db, const char* name) {
         rc = tsedge_db_rewrite_manifest(db);
     }
     return rc;
+}
+
+void tsedge_debug_reset_read_stats(tsedge_db* db) {
+    if (!db) {
+        return;
+    }
+    memset(&db->read_debug_stats, 0, sizeof(db->read_debug_stats));
+}
+
+void tsedge_debug_get_read_stats(tsedge_db* db, tsedge_read_debug_stats* out_stats) {
+    if (!db || !out_stats) {
+        return;
+    }
+    *out_stats = db->read_debug_stats;
 }

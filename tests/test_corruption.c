@@ -307,6 +307,102 @@ void test_corrupt_wal_torn_final_entry(void) {
     rm_rf(path);
 }
 
+static int create_batch_wal_database(const char* path, size_t count) {
+    tsedge_point* points = make_linear_points(count, 5000);
+    if (!points) {
+        return TSEDGE_ERR_NO_MEMORY;
+    }
+
+    tsedge_db* db = NULL;
+    int rc = tsedge_open(path, &db);
+    if (rc != TSEDGE_OK) {
+        free(points);
+        return rc;
+    }
+    rc = tsedge_set_durability(db, TSEDGE_DURABILITY_STRICT);
+    if (rc == TSEDGE_OK) {
+        rc = tsedge_create_series(db, "s");
+    }
+    if (rc == TSEDGE_OK) {
+        rc = tsedge_append_batch(db, "s", points, count);
+    }
+    free(points);
+    if (rc != TSEDGE_OK) {
+        tsedge_close(db);
+        return rc;
+    }
+    simulate_crash(&db);
+    return TSEDGE_OK;
+}
+
+void test_corrupt_wal_batch_checksum(void) {
+    const char* path = temp_path("corrupt_wal_batch_checksum");
+    char wal_path[512];
+    long size = 0;
+    snprintf(wal_path, sizeof(wal_path), "%s/wal.log", path);
+    CHECK_OK(create_batch_wal_database(path, 16));
+    CHECK(file_size(wal_path, &size) == 0);
+    CHECK(size > 0);
+
+    FILE* f = fopen(wal_path, "r+b");
+    CHECK(f != NULL);
+    CHECK(fseek(f, size - 1, SEEK_SET) == 0);
+    int byte = fgetc(f);
+    CHECK(byte != EOF);
+    unsigned char bad = (unsigned char)((unsigned char)byte ^ 0xffu);
+    CHECK(fseek(f, size - 1, SEEK_SET) == 0);
+    CHECK(fwrite(&bad, 1, 1, f) == 1);
+    CHECK(fclose(f) == 0);
+
+    tsedge_db* db = NULL;
+    CHECK(tsedge_open(path, &db) == TSEDGE_ERR_CORRUPT);
+    rm_rf(path);
+}
+
+void test_corrupt_wal_batch_torn_final_entry(void) {
+    const char* path = temp_path("corrupt_wal_batch_torn");
+    char wal_path[512];
+    long size = 0;
+    snprintf(wal_path, sizeof(wal_path), "%s/wal.log", path);
+    CHECK_OK(create_batch_wal_database(path, 16));
+    CHECK(file_size(wal_path, &size) == 0);
+    CHECK(size > 16);
+    CHECK(truncate_file_to(wal_path, size - 8) == 0);
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "s", 5000, 6000, collect_cb, &vec));
+    CHECK(vec.count == 0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_corrupt_wal_batch_invalid_record_type(void) {
+    const char* path = temp_path("corrupt_wal_batch_type");
+    char wal_path[512];
+    snprintf(wal_path, sizeof(wal_path), "%s/wal.log", path);
+    CHECK_OK(create_batch_wal_database(path, 16));
+    CHECK(overwrite_u32(wal_path, 12L, 99u) == 0);
+
+    tsedge_db* db = NULL;
+    CHECK(tsedge_open(path, &db) == TSEDGE_ERR_CORRUPT);
+    rm_rf(path);
+}
+
+void test_corrupt_wal_batch_invalid_point_count(void) {
+    const char* path = temp_path("corrupt_wal_batch_count");
+    char wal_path[512];
+    snprintf(wal_path, sizeof(wal_path), "%s/wal.log", path);
+    CHECK_OK(create_batch_wal_database(path, 16));
+    CHECK(overwrite_u32(wal_path, 20L, 0xffffffffu) == 0);
+
+    tsedge_db* db = NULL;
+    CHECK(tsedge_open(path, &db) == TSEDGE_ERR_CORRUPT);
+    rm_rf(path);
+}
+
 void test_random_bytes_segment_files(void) {
     static const size_t sizes[] = {0u, 1u, 4u, 16u, 64u, 256u};
     uint32_t seed = 0xC0FFEEu;

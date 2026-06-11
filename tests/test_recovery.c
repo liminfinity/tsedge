@@ -48,6 +48,13 @@ static int collect_cb(const tsedge_point* point, void* user_data) {
     return 0;
 }
 
+static int count_cb_local(const tsedge_point* point, void* user_data) {
+    (void)point;
+    size_t* count = (size_t*)user_data;
+    ++(*count);
+    return 0;
+}
+
 static void rm_rf(const char* path) {
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
@@ -78,6 +85,28 @@ static uint32_t read_u32_le_local(const unsigned char* data) {
         ((uint32_t)data[3] << 24);
 }
 
+static void write_u32_le_local(unsigned char* out, uint32_t value) {
+    out[0] = (unsigned char)(value & 0xffu);
+    out[1] = (unsigned char)((value >> 8) & 0xffu);
+    out[2] = (unsigned char)((value >> 16) & 0xffu);
+    out[3] = (unsigned char)((value >> 24) & 0xffu);
+}
+
+static void write_u64_le_local(unsigned char* out, uint64_t value) {
+    for (size_t i = 0; i < 8u; ++i) {
+        out[i] = (unsigned char)((value >> (i * 8u)) & 0xffu);
+    }
+}
+
+static uint32_t fnv1a32_local(const unsigned char* data, size_t size) {
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < size; ++i) {
+        hash ^= data[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
 static uint32_t first_wal_entry_size(const char* wal_path) {
     FILE* f = fopen(wal_path, "rb");
     if (!f) {
@@ -90,6 +119,35 @@ static uint32_t first_wal_entry_size(const char* wal_path) {
     }
     fclose(f);
     return read_u32_le_local(prefix + 8);
+}
+
+static int write_v2_wal_point(const char* wal_path, const char* series_name, int64_t timestamp, double value) {
+    size_t name_len = strlen(series_name);
+    size_t entry_size = 32u + name_len + 4u;
+    unsigned char* entry = (unsigned char*)malloc(entry_size);
+    if (!entry) {
+        return TSEDGE_ERR_NO_MEMORY;
+    }
+
+    write_u32_le_local(entry, 0x57455354u);
+    write_u32_le_local(entry + 4, 2u);
+    write_u32_le_local(entry + 8, (uint32_t)entry_size);
+    write_u32_le_local(entry + 12, (uint32_t)name_len);
+    write_u64_le_local(entry + 16, (uint64_t)timestamp);
+    uint64_t bits = 0;
+    memcpy(&bits, &value, sizeof(bits));
+    write_u64_le_local(entry + 24, bits);
+    memcpy(entry + 32, series_name, name_len);
+    write_u32_le_local(entry + entry_size - 4u, fnv1a32_local(entry, entry_size - 4u));
+
+    FILE* f = fopen(wal_path, "wb");
+    if (!f) {
+        free(entry);
+        return TSEDGE_ERR_IO;
+    }
+    int ok = fwrite(entry, 1, entry_size, f) == entry_size;
+    free(entry);
+    return fclose(f) == 0 && ok ? TSEDGE_OK : TSEDGE_ERR_IO;
 }
 
 void test_wal_recovery(void) {
@@ -211,6 +269,157 @@ void test_wal_recovery_after_batch_append(void) {
     CHECK(vec.count == 4);
     CHECK(vec.points[0].value == 10.0);
     CHECK(vec.points[3].value == 40.0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_wal_v2_point_recovery_compatibility(void) {
+    const char* path = temp_path("wal_v2_compat");
+    char wal_path[256];
+    make_path(wal_path, sizeof(wal_path), path, "wal.log");
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "legacy"));
+    CHECK_OK(tsedge_close(db));
+
+    CHECK_OK(write_v2_wal_point(wal_path, "legacy", 42, 24.5));
+
+    CHECK_OK(tsedge_open(path, &db));
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "legacy", 42, 42, collect_cb, &vec));
+    CHECK(vec.count == 1);
+    CHECK(vec.points[0].timestamp == 42);
+    CHECK(vec.points[0].value == 24.5);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_wal_batch_recovery_large(void) {
+    const char* path = temp_path("batch_recovery_large");
+    const size_t count = 40000u;
+    tsedge_point* points = (tsedge_point*)malloc(count * sizeof(*points));
+    CHECK(points != NULL);
+    for (size_t i = 0; i < count; ++i) {
+        points[i].timestamp = 1000000 + (int64_t)i;
+        points[i].value = 100.0 + (double)i * 0.01;
+    }
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_set_durability(db, TSEDGE_DURABILITY_STRICT));
+    CHECK_OK(tsedge_create_series(db, "recover"));
+    CHECK_OK(tsedge_append_batch(db, "recover", points, count));
+    simulate_crash(&db);
+
+    CHECK_OK(tsedge_open(path, &db));
+    size_t recovered = 0;
+    CHECK_OK(tsedge_read_range(db, "recover", 1000000, 1000000 + (int64_t)count, count_cb_local, &recovered));
+    CHECK(recovered == count);
+    CHECK_OK(tsedge_close(db));
+    free(points);
+    rm_rf(path);
+}
+
+void test_set_durability_invalid_args(void) {
+    const char* path = temp_path("durability_invalid");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+
+    CHECK(tsedge_set_durability(NULL, TSEDGE_DURABILITY_FAST) == TSEDGE_ERR_INVALID_ARGUMENT);
+    CHECK(tsedge_set_durability(db, (tsedge_durability_mode)99) == TSEDGE_ERR_INVALID_ARGUMENT);
+
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_wal_buffer_flush_on_close(void) {
+    const char* path = temp_path("durability_close");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_set_durability(db, TSEDGE_DURABILITY_FAST));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    for (int i = 0; i < 8; ++i) {
+        CHECK_OK(tsedge_append(db, "s", 100 + i, 50.0 + (double)i));
+    }
+    CHECK_OK(tsedge_close(db));
+
+    db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "s", 100, 107, collect_cb, &vec));
+    CHECK(vec.count == 8);
+    CHECK(vec.points[7].value == 57.0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_wal_buffer_flush_on_manual_flush(void) {
+    const char* path = temp_path("durability_manual_flush");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_set_durability(db, TSEDGE_DURABILITY_BALANCED));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    for (int i = 0; i < 8; ++i) {
+        CHECK_OK(tsedge_append(db, "s", 200 + i, 70.0 + (double)i));
+    }
+    CHECK_OK(tsedge_flush_all(db));
+    CHECK_OK(tsedge_close(db));
+
+    db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "s", 200, 207, collect_cb, &vec));
+    CHECK(vec.count == 8);
+    CHECK(vec.points[0].value == 70.0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_strict_durability_recovery(void) {
+    const char* path = temp_path("durability_strict");
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_set_durability(db, TSEDGE_DURABILITY_STRICT));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append(db, "s", 1, 11.0));
+    CHECK_OK(tsedge_append(db, "s", 2, 12.0));
+    simulate_crash(&db);
+
+    CHECK_OK(tsedge_open(path, &db));
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "s", 1, 2, collect_cb, &vec));
+    CHECK(vec.count == 2);
+    CHECK(vec.points[1].value == 12.0);
+    CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_fast_durability_batch_correctness(void) {
+    const char* path = temp_path("durability_batch");
+    tsedge_point points[4] = {
+        {1, 1.0},
+        {2, 2.0},
+        {3, 3.0},
+        {4, 4.0},
+    };
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_set_durability(db, TSEDGE_DURABILITY_FAST));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append_batch(db, "s", points, 4));
+    CHECK_OK(tsedge_flush_all(db));
+
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    CHECK_OK(tsedge_read_range(db, "s", 1, 4, collect_cb, &vec));
+    CHECK(vec.count == 4);
+    CHECK(vec.points[3].value == 4.0);
+
     CHECK_OK(tsedge_close(db));
     rm_rf(path);
 }

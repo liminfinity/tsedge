@@ -8,7 +8,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define TSEDGE_BLOCK_MAX_POINTS 4096u
+#ifndef TSEDGE_BLOCK_MAX_POINTS
+/* Default chosen from block-size tuning benchmarks as a write/read trade-off. */
+#define TSEDGE_BLOCK_MAX_POINTS 16384u
+#endif
 #define TSEDGE_BLOCK_COMPRESSION_DELTA_XOR 1u
 #define TSEDGE_BLOCK_HEADER_SIZE 72u
 #define TSEDGE_BLOCK_MAX_PAYLOAD_BYTES (TSEDGE_BLOCK_MAX_POINTS * 32u)

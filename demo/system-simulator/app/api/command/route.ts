@@ -23,12 +23,26 @@ export async function POST(request: Request) {
 
   const finalPath = path.join(dir, "command.json");
   const tmpPath = path.join(dir, "command.json.tmp");
-  const commandPayload: { command: string; created_at: number; series?: string } = {
+  const commandPayload: { command: string; created_at: number; series?: string; window_size?: number; points?: number } = {
     command: parsed.data.command,
     created_at: Date.now()
   };
-  if (parsed.data.command === "export_csv" && parsed.data.series) {
+  if (
+    (
+      parsed.data.command === "export_csv" ||
+      parsed.data.command === "aggregate_avg" ||
+      parsed.data.command === "aggregate_min_max" ||
+      parsed.data.command === "window_aggregate"
+    ) &&
+    parsed.data.series
+  ) {
     commandPayload.series = parsed.data.series;
+  }
+  if (parsed.data.command === "window_aggregate" && parsed.data.window_size !== undefined) {
+    commandPayload.window_size = parsed.data.window_size;
+  }
+  if (parsed.data.command === "append_custom" && parsed.data.points !== undefined) {
+    commandPayload.points = parsed.data.points;
   }
   const payload = JSON.stringify(
     commandPayload,

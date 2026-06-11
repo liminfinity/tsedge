@@ -1,5 +1,6 @@
 #include "block.h"
 #include "db.h"
+#include "series_query.h"
 #include "test_helpers.h"
 #include "tsedge.h"
 
@@ -171,11 +172,15 @@ void test_series_stats_after_single_block_flush(void) {
 
 void test_block_stats_aggregate_and_index(void) {
     const char* path = temp_path("block_stats");
+    const size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS * 2u + 808u;
+    const int64_t first_block_end = (int64_t)TSEDGE_BLOCK_MAX_POINTS - 1;
+    const int64_t boundary_from = (int64_t)TSEDGE_BLOCK_MAX_POINTS - 6;
+    const int64_t boundary_to = (int64_t)TSEDGE_BLOCK_MAX_POINTS + 9;
     tsedge_db* db = NULL;
     CHECK_OK(tsedge_open(path, &db));
     CHECK_OK(tsedge_create_series(db, "s"));
-    for (int i = 0; i < 9000; ++i) {
-        CHECK_OK(tsedge_append(db, "s", i, (double)i));
+    for (size_t i = 0; i < count; ++i) {
+        CHECK_OK(tsedge_append(db, "s", (int64_t)i, (double)i));
     }
     CHECK_OK(tsedge_close(db));
 
@@ -186,17 +191,96 @@ void test_block_stats_aggregate_and_index(void) {
     CHECK(series->block_index_count == 3);
 
     double result = 0.0;
-    CHECK_OK(tsedge_aggregate(db, "s", 0, 4095, TSEDGE_AGG_SUM, &result));
-    CHECK(result == (4095.0 * 4096.0) / 2.0);
-    CHECK_OK(tsedge_aggregate(db, "s", 0, 4095, TSEDGE_AGG_COUNT, &result));
-    CHECK(result == 4096.0);
-    CHECK_OK(tsedge_aggregate(db, "s", 4090, 4105, TSEDGE_AGG_SUM, &result));
-    CHECK(result == ((4090.0 + 4105.0) * 16.0) / 2.0);
-    CHECK_OK(tsedge_aggregate(db, "s", 4090, 4105, TSEDGE_AGG_MIN, &result));
-    CHECK(result == 4090.0);
-    CHECK_OK(tsedge_aggregate(db, "s", 4090, 4105, TSEDGE_AGG_MAX, &result));
-    CHECK(result == 4105.0);
+    CHECK_OK(tsedge_aggregate(db, "s", 0, first_block_end, TSEDGE_AGG_SUM, &result));
+    CHECK(result == ((double)first_block_end * (double)TSEDGE_BLOCK_MAX_POINTS) / 2.0);
+    CHECK_OK(tsedge_aggregate(db, "s", 0, first_block_end, TSEDGE_AGG_COUNT, &result));
+    CHECK(result == (double)TSEDGE_BLOCK_MAX_POINTS);
+    CHECK_OK(tsedge_aggregate(db, "s", boundary_from, boundary_to, TSEDGE_AGG_SUM, &result));
+    CHECK(result == ((double)(boundary_from + boundary_to) * 16.0) / 2.0);
+    CHECK_OK(tsedge_aggregate(db, "s", boundary_from, boundary_to, TSEDGE_AGG_MIN, &result));
+    CHECK(result == (double)boundary_from);
+    CHECK_OK(tsedge_aggregate(db, "s", boundary_from, boundary_to, TSEDGE_AGG_MAX, &result));
+    CHECK(result == (double)boundary_to);
     CHECK_OK(tsedge_close(db));
+    rm_rf(path);
+}
+
+void test_read_debug_stats_range_skip(void) {
+    const char* path = temp_path("read_debug_stats");
+    const size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS * 3u;
+    tsedge_point* points = make_linear_points(count, 0);
+    CHECK(points != NULL);
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append_batch(db, "s", points, count));
+    CHECK_OK(tsedge_flush_all(db));
+
+    tsedge_debug_reset_read_stats(db);
+    point_vec vec;
+    memset(&vec, 0, sizeof(vec));
+    int64_t from = (int64_t)TSEDGE_BLOCK_MAX_POINTS + 10;
+    int64_t to = (int64_t)TSEDGE_BLOCK_MAX_POINTS + 20;
+    CHECK_OK(tsedge_read_range(db, "s", from, to, collect_cb, &vec));
+    CHECK(vec.count == 11);
+
+    tsedge_read_debug_stats stats;
+    tsedge_debug_get_read_stats(db, &stats);
+    CHECK(stats.blocks_total == 3);
+    CHECK(stats.blocks_scanned == 3);
+    CHECK(stats.blocks_skipped == 2);
+    CHECK(stats.blocks_decoded == 1);
+    CHECK(stats.points_decoded == TSEDGE_BLOCK_MAX_POINTS);
+
+    tsedge_debug_reset_read_stats(db);
+    double result = 0.0;
+    CHECK_OK(tsedge_aggregate(db, "s", 0, (int64_t)TSEDGE_BLOCK_MAX_POINTS - 1, TSEDGE_AGG_SUM, &result));
+    CHECK(result == ((double)(TSEDGE_BLOCK_MAX_POINTS - 1u) * (double)TSEDGE_BLOCK_MAX_POINTS) / 2.0);
+    tsedge_debug_get_read_stats(db, &stats);
+    CHECK(stats.blocks_total == 3);
+    CHECK(stats.blocks_scanned == 3);
+    CHECK(stats.blocks_skipped == 2);
+    CHECK(stats.blocks_decoded == 0);
+    CHECK(stats.points_decoded == 0);
+
+    CHECK_OK(tsedge_close(db));
+    free(points);
+    rm_rf(path);
+}
+
+void test_read_stats_min_max_not_double_counted(void) {
+    const char* path = temp_path("min_max_stats_once");
+    const size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS * 3u;
+    tsedge_point* points = make_linear_points(count, 0);
+    CHECK(points != NULL);
+
+    tsedge_db* db = NULL;
+    CHECK_OK(tsedge_open(path, &db));
+    CHECK_OK(tsedge_create_series(db, "s"));
+    CHECK_OK(tsedge_append_batch(db, "s", points, count));
+    CHECK_OK(tsedge_flush_all(db));
+
+    tsedge_series* series = tsedge_db_find_series(db, "s");
+    CHECK(series != NULL);
+
+    tsedge_debug_reset_read_stats(db);
+    double min_value = 0.0;
+    double max_value = 0.0;
+    CHECK_OK(tsedge_series_aggregate_min_max(db, series, 0, (int64_t)count - 1, &min_value, &max_value));
+    CHECK(min_value == 0.0);
+    CHECK(max_value == (double)(count - 1u));
+
+    tsedge_read_debug_stats stats;
+    tsedge_debug_get_read_stats(db, &stats);
+    CHECK(stats.blocks_total == 3);
+    CHECK(stats.blocks_scanned == 3);
+    CHECK(stats.blocks_skipped == 0);
+    CHECK(stats.blocks_decoded == 0);
+    CHECK(stats.points_decoded == 0);
+
+    CHECK_OK(tsedge_close(db));
+    free(points);
     rm_rf(path);
 }
 

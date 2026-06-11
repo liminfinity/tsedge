@@ -39,6 +39,25 @@ static void set_export_state(agent_state* state, int ok, const char* series_name
     snprintf(state->export_message, sizeof(state->export_message), "%s", message ? message : "");
 }
 
+static int refresh_sensor_handles(agent_state* state) {
+    for (size_t i = 0; i < SERIES_COUNT; ++i) {
+        int rc = tsedge_get_series_handle(state->db, SENSORS[i].name, &state->sensor_handles[i]);
+        if (rc != TSEDGE_OK) {
+            return rc;
+        }
+    }
+    return TSEDGE_OK;
+}
+
+static int refresh_debug_handle(agent_state* state) {
+    int rc = tsedge_get_series_handle(state->db, "debug.temp", &state->debug_handle);
+    if (rc == TSEDGE_ERR_NOT_FOUND) {
+        state->debug_handle = NULL;
+        return TSEDGE_OK;
+    }
+    return rc;
+}
+
 int create_series(agent_state* state) {
     for (size_t i = 0; i < SERIES_COUNT; ++i) {
         int rc = tsedge_create_series(state->db, SENSORS[i].name);
@@ -46,6 +65,14 @@ int create_series(agent_state* state) {
             fprintf(stderr, "create_series(%s): %s\n", SENSORS[i].name, tsedge_strerror(rc));
             return rc;
         }
+    }
+    int rc = refresh_sensor_handles(state);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    rc = refresh_debug_handle(state);
+    if (rc != TSEDGE_OK) {
+        return rc;
     }
     add_event(state, "sensor", "Созданы ряды экологического поста.");
     return TSEDGE_OK;
@@ -68,7 +95,7 @@ int append_history(agent_state* state) {
                 points[j].timestamp = START_TIMESTAMP + (int64_t)index * STEP_MS;
                 points[j].value = sensor_value(index, sensor, 0);
             }
-            int rc = tsedge_append_batch(state->db, SENSORS[sensor].name, points, chunk);
+            int rc = tsedge_append_batch_handle(state->db, state->sensor_handles[sensor], points, chunk);
             if (rc != TSEDGE_OK) {
                 free(points);
                 return rc;
@@ -97,9 +124,16 @@ static int append_debug_point_if_exists(agent_state* state, int64_t timestamp, s
         *added = 0;
     }
     if (!debug_series_exists(state)) {
+        state->debug_handle = NULL;
         return TSEDGE_OK;
     }
-    int rc = tsedge_append(state->db, "debug.temp", timestamp, debug_value(state->tick));
+    if (!state->debug_handle) {
+        int rc = refresh_debug_handle(state);
+        if (rc != TSEDGE_OK) {
+            return rc;
+        }
+    }
+    int rc = tsedge_append_handle(state->db, state->debug_handle, timestamp, debug_value(state->tick));
     if (rc == TSEDGE_OK && added) {
         *added = 1u;
     }
@@ -113,7 +147,7 @@ static int append_one_step(agent_state* state, size_t* out_points_written) {
 
     for (size_t i = 0; i < SERIES_COUNT; ++i) {
         double value = sensor_value(state->tick, i, pollution_active && i == 4u);
-        int rc = tsedge_append(state->db, SENSORS[i].name, timestamp, value);
+        int rc = tsedge_append_handle(state->db, state->sensor_handles[i], timestamp, value);
         if (rc != TSEDGE_OK) {
             fprintf(stderr, "append(%s): %s\n", SENSORS[i].name, tsedge_strerror(rc));
             return rc;
@@ -209,7 +243,8 @@ int reopen_db(agent_state* state) {
     if (rc != TSEDGE_OK) {
         return rc;
     }
-    return TSEDGE_OK;
+    state->debug_handle = NULL;
+    return refresh_sensor_handles(state);
 }
 
 int run_retention(agent_state* state) {
@@ -308,6 +343,64 @@ int append_steps(agent_state* state, size_t steps, const char* command_name, con
     return TSEDGE_OK;
 }
 
+int append_custom_points(agent_state* state, int64_t requested_points) {
+    if (requested_points <= 0 || requested_points > 1000000LL) {
+        set_last_command(state, "append_custom", "error", "Укажите от 1 до 1 000 000 точек.", 0);
+        return TSEDGE_OK;
+    }
+
+    size_t target = (size_t)requested_points;
+    size_t affected = 0;
+    int debug_available = debug_series_exists(state);
+    if (debug_available && !state->debug_handle) {
+        int rc = refresh_debug_handle(state);
+        if (rc != TSEDGE_OK) {
+            set_last_command(state, "append_custom", "error", tsedge_strerror(rc), affected);
+            return rc;
+        }
+    }
+
+    while (affected < target) {
+        int64_t timestamp = ecopost_simulated_timestamp(state);
+        int pollution_active = state->pollution_ticks_left > 0;
+        int wrote_pm25 = 0;
+
+        for (size_t sensor = 0; sensor < SERIES_COUNT && affected < target; ++sensor) {
+            double value = sensor_value(state->tick, sensor, pollution_active && sensor == 4u);
+            int rc = tsedge_append_handle(state->db, state->sensor_handles[sensor], timestamp, value);
+            if (rc != TSEDGE_OK) {
+                set_last_command(state, "append_custom", "error", tsedge_strerror(rc), affected);
+                return rc;
+            }
+            state->last_values[sensor] = value;
+            wrote_pm25 = wrote_pm25 || sensor == 4u;
+            ++affected;
+        }
+
+        if (debug_available && affected < target) {
+            int rc = tsedge_append_handle(state->db, state->debug_handle, timestamp, debug_value(state->tick));
+            if (rc != TSEDGE_OK) {
+                set_last_command(state, "append_custom", "error", tsedge_strerror(rc), affected);
+                return rc;
+            }
+            ++affected;
+        }
+
+        if (state->pollution_ticks_left > 0 && wrote_pm25) {
+            --state->pollution_ticks_left;
+        }
+        ++state->tick;
+    }
+
+    char message[128];
+    snprintf(message, sizeof(message), "Добавлено %zu точек.", affected);
+    set_last_command(state, "append_custom", "ok", message, affected);
+    add_event(state, "append", message);
+    add_event(state, "wal", "Точки записаны в WAL.");
+    add_event(state, "buffer", "Точки добавлены в буфер.");
+    return TSEDGE_OK;
+}
+
 int append_batch_command(agent_state* state) {
     tsedge_point* points = (tsedge_point*)malloc(DIAG_BATCH_SIZE * sizeof(*points));
     if (!points) {
@@ -323,7 +416,7 @@ int append_batch_command(agent_state* state) {
             points[j].timestamp = START_TIMESTAMP + (int64_t)index * STEP_MS;
             points[j].value = sensor_value(index, sensor, state->pollution_ticks_left > 0 && sensor == 4u);
         }
-        int rc = tsedge_append_batch(state->db, SENSORS[sensor].name, points, DIAG_BATCH_SIZE);
+        int rc = tsedge_append_batch_handle(state->db, state->sensor_handles[sensor], points, DIAG_BATCH_SIZE);
         if (rc != TSEDGE_OK) {
             free(points);
             set_last_command(state, "append_batch", "error", tsedge_strerror(rc), sensor * DIAG_BATCH_SIZE);
@@ -338,7 +431,15 @@ int append_batch_command(agent_state* state) {
             points[j].timestamp = START_TIMESTAMP + (int64_t)index * STEP_MS;
             points[j].value = debug_value(index);
         }
-        int rc = tsedge_append_batch(state->db, "debug.temp", points, DIAG_BATCH_SIZE);
+        if (!state->debug_handle) {
+            int handle_rc = refresh_debug_handle(state);
+            if (handle_rc != TSEDGE_OK) {
+                free(points);
+                set_last_command(state, "append_batch", "error", tsedge_strerror(handle_rc), affected);
+                return handle_rc;
+            }
+        }
+        int rc = tsedge_append_batch_handle(state->db, state->debug_handle, points, DIAG_BATCH_SIZE);
         if (rc != TSEDGE_OK) {
             free(points);
             set_last_command(state, "append_batch", "error", tsedge_strerror(rc), affected);
@@ -390,7 +491,8 @@ int read_last_range_command(agent_state* state) {
     return TSEDGE_OK;
 }
 
-int aggregate_avg_command(agent_state* state) {
+int aggregate_avg_command(agent_state* state, const char* series_name) {
+    const char* selected_series = series_name && series_name[0] ? series_name : "air.temperature";
     int64_t to = ecopost_simulated_timestamp(state);
     int64_t from = to - 60LL * 60LL * 1000LL;
     if (from < START_TIMESTAMP) {
@@ -399,9 +501,9 @@ int aggregate_avg_command(agent_state* state) {
 
     double result = 0.0;
     double started = monotonic_ms();
-    int rc = tsedge_aggregate(state->db, "air.temperature", from, to, TSEDGE_AGG_AVG, &result);
+    int rc = tsedge_aggregate(state->db, selected_series, from, to, TSEDGE_AGG_AVG, &result);
     double duration = monotonic_ms() - started;
-    set_last_query_base(state, "AVG", "air.temperature", from, to);
+    set_last_query_base(state, "AVG", selected_series, from, to);
     state->last_query.result = result;
     state->last_query.duration_ms = duration;
     state->last_query.points_read = (size_t)((to - from) / STEP_MS);
@@ -415,7 +517,8 @@ int aggregate_avg_command(agent_state* state) {
     return TSEDGE_OK;
 }
 
-int aggregate_min_max_command(agent_state* state) {
+int aggregate_min_max_command(agent_state* state, const char* series_name) {
+    const char* selected_series = series_name && series_name[0] ? series_name : "pm25.concentration";
     int64_t to = ecopost_simulated_timestamp(state);
     int64_t from = to - 60LL * 60LL * 1000LL;
     if (from < START_TIMESTAMP) {
@@ -425,12 +528,12 @@ int aggregate_min_max_command(agent_state* state) {
     double min_value = 0.0;
     double max_value = 0.0;
     double started = monotonic_ms();
-    int rc = tsedge_aggregate(state->db, "pm25.concentration", from, to, TSEDGE_AGG_MIN, &min_value);
+    int rc = tsedge_aggregate(state->db, selected_series, from, to, TSEDGE_AGG_MIN, &min_value);
     if (rc == TSEDGE_OK) {
-        rc = tsedge_aggregate(state->db, "pm25.concentration", from, to, TSEDGE_AGG_MAX, &max_value);
+        rc = tsedge_aggregate(state->db, selected_series, from, to, TSEDGE_AGG_MAX, &max_value);
     }
     double duration = monotonic_ms() - started;
-    set_last_query_base(state, "MIN_MAX", "pm25.concentration", from, to);
+    set_last_query_base(state, "MIN_MAX", selected_series, from, to);
     state->last_query.min_value = min_value;
     state->last_query.max_value = max_value;
     state->last_query.duration_ms = duration;
@@ -442,6 +545,115 @@ int aggregate_min_max_command(agent_state* state) {
     }
     set_last_command(state, "aggregate_min_max", "ok", "MIN/MAX рассчитаны.", 0);
     add_event(state, "query", "MIN/MAX рассчитаны.");
+    return TSEDGE_OK;
+}
+
+int window_aggregate_command(agent_state* state, const char* series_name, int64_t requested_window_size, int has_window_size) {
+    const char* selected_series = series_name && series_name[0] ? series_name : "air.temperature";
+    int64_t window_size = has_window_size ? requested_window_size : 1000LL;
+
+    memset(&state->window_aggregate, 0, sizeof(state->window_aggregate));
+    state->window_aggregate.last_run = 1;
+    snprintf(state->window_aggregate.series, sizeof(state->window_aggregate.series), "%s", selected_series);
+    state->window_aggregate.window_size = window_size;
+
+    if (window_size <= 0) {
+        snprintf(state->window_aggregate.message, sizeof(state->window_aggregate.message), "Размер окна должен быть больше нуля.");
+        set_last_query_base(state, "WINDOW", selected_series, 0, 0);
+        snprintf(state->last_query.status, sizeof(state->last_query.status), "error");
+        set_last_command(state, "window_aggregate", "error", "Размер окна должен быть больше нуля.", 0);
+        add_event(state, "query", "Агрегация по окнам не выполнена: некорректный размер окна.");
+        return TSEDGE_OK;
+    }
+
+    tsedge_series_stats stats;
+    int stats_rc = tsedge_get_series_stats(state->db, selected_series, &stats);
+    if (stats_rc != TSEDGE_OK) {
+        snprintf(state->window_aggregate.message, sizeof(state->window_aggregate.message), "%s", tsedge_strerror(stats_rc));
+        set_last_query_base(state, "WINDOW", selected_series, 0, 0);
+        snprintf(state->last_query.status, sizeof(state->last_query.status), "error");
+        set_last_command(state, "window_aggregate", "error", tsedge_strerror(stats_rc), 0);
+        add_event(state, "query", "Агрегация по окнам не выполнена: ряд не найден.");
+        return stats_rc == TSEDGE_ERR_NOT_FOUND ? TSEDGE_OK : stats_rc;
+    }
+    if (!stats.has_time_range) {
+        snprintf(state->window_aggregate.message, sizeof(state->window_aggregate.message), "В ряду нет точек.");
+        set_last_query_base(state, "WINDOW", selected_series, 0, 0);
+        set_last_command(state, "window_aggregate", "error", "В ряду нет точек.", 0);
+        add_event(state, "query", "Агрегация по окнам не выполнена: в ряду нет точек.");
+        return TSEDGE_OK;
+    }
+    if (stats.max_timestamp == INT64_MAX) {
+        snprintf(state->window_aggregate.message, sizeof(state->window_aggregate.message), "Диапазон времени слишком большой.");
+        set_last_query_base(state, "WINDOW", selected_series, stats.min_timestamp, stats.max_timestamp);
+        snprintf(state->last_query.status, sizeof(state->last_query.status), "error");
+        set_last_command(state, "window_aggregate", "error", "Диапазон времени слишком большой.", 0);
+        return TSEDGE_OK;
+    }
+
+    int64_t from = stats.min_timestamp;
+    int64_t to_exclusive = stats.max_timestamp + 1LL;
+
+    tsedge_window_aggregate* windows = NULL;
+    size_t window_count = 0;
+    double started = monotonic_ms();
+    int rc = tsedge_aggregate_windowed(state->db, selected_series, from, to_exclusive, window_size, &windows, &window_count);
+    double duration = monotonic_ms() - started;
+
+    state->window_aggregate.ok = rc == TSEDGE_OK;
+    state->window_aggregate.query_seconds = duration / 1000.0;
+
+    set_last_query_base(state, "WINDOW", selected_series, from, to_exclusive);
+    state->last_query.duration_ms = duration;
+
+    if (rc != TSEDGE_OK) {
+        snprintf(state->window_aggregate.message, sizeof(state->window_aggregate.message), "%s", tsedge_strerror(rc));
+        snprintf(state->last_query.status, sizeof(state->last_query.status), "error");
+        set_last_command(state, "window_aggregate", "error", tsedge_strerror(rc), 0);
+        tsedge_free_window_aggregates(windows);
+        return rc == TSEDGE_ERR_NOT_FOUND ? TSEDGE_OK : rc;
+    }
+
+    size_t source_points = 0;
+    double min_value = 0.0;
+    double max_value = 0.0;
+    double avg_sum = 0.0;
+    double weighted_sum = 0.0;
+    for (size_t i = 0; i < window_count; ++i) {
+        source_points += (size_t)windows[i].count;
+        avg_sum += windows[i].avg;
+        weighted_sum += windows[i].avg * (double)windows[i].count;
+        if (i == 0 || windows[i].min < min_value) {
+            min_value = windows[i].min;
+        }
+        if (i == 0 || windows[i].max > max_value) {
+            max_value = windows[i].max;
+        }
+    }
+
+    state->window_aggregate.window_count = window_count;
+    state->window_aggregate.source_points_estimate = source_points;
+    state->window_aggregate.downsample_ratio = window_count > 0 ? (double)source_points / (double)window_count : 0.0;
+    state->window_aggregate.min_value = min_value;
+    state->window_aggregate.max_value = max_value;
+    state->window_aggregate.avg_of_avgs = window_count > 0 ? avg_sum / (double)window_count : 0.0;
+    state->window_aggregate.weighted_avg = source_points > 0 ? weighted_sum / (double)source_points : 0.0;
+    if (window_count > 0) {
+        state->window_aggregate.first = windows[0];
+        state->window_aggregate.last = windows[window_count - 1u];
+    }
+    snprintf(state->window_aggregate.message, sizeof(state->window_aggregate.message), "Агрегация по окнам выполнена.");
+
+    state->last_query.points_read = source_points;
+    state->last_query.result = (double)window_count;
+    state->last_query.min_value = min_value;
+    state->last_query.max_value = max_value;
+    set_last_command(state, "window_aggregate", "ok", "Агрегация по окнам выполнена.", source_points);
+    char event_message[192];
+    snprintf(event_message, sizeof(event_message), "Агрегация по окнам выполнена: %s.", selected_series);
+    add_event(state, "query", event_message);
+
+    tsedge_free_window_aggregates(windows);
     return TSEDGE_OK;
 }
 
@@ -469,10 +681,15 @@ int create_debug_series(agent_state* state) {
         set_last_command(state, "create_debug_series", "error", tsedge_strerror(rc), 0);
         return rc;
     }
+    rc = tsedge_get_series_handle(state->db, name, &state->debug_handle);
+    if (rc != TSEDGE_OK) {
+        set_last_command(state, "create_debug_series", "error", tsedge_strerror(rc), 0);
+        return rc;
+    }
 
     int64_t timestamp = ecopost_simulated_timestamp(state);
     for (size_t i = 0; i < 8u; ++i) {
-        rc = tsedge_append(state->db, name, timestamp + (int64_t)i * STEP_MS, debug_value(state->tick + i));
+        rc = tsedge_append_handle(state->db, state->debug_handle, timestamp + (int64_t)i * STEP_MS, debug_value(state->tick + i));
         if (rc != TSEDGE_OK) {
             set_last_command(state, "create_debug_series", "error", tsedge_strerror(rc), i);
             return rc;
@@ -495,6 +712,7 @@ int delete_debug_series(agent_state* state) {
         set_last_command(state, "delete_debug_series", "error", tsedge_strerror(rc), 0);
         return rc;
     }
+    state->debug_handle = NULL;
     set_last_command(state, "delete_debug_series", "ok", "Тестовый ряд удалён.", 0);
     add_event(state, "delete", "Тестовый ряд удалён.");
     return TSEDGE_OK;
@@ -505,6 +723,8 @@ int reset_demo(agent_state* state) {
         tsedge_close(state->db);
         state->db = NULL;
     }
+    memset(state->sensor_handles, 0, sizeof(state->sensor_handles));
+    state->debug_handle = NULL;
     if (remove_tree(state->config.db_path) != 0 || remove_tree(state->config.output_path) != 0) {
         return TSEDGE_ERR_IO;
     }

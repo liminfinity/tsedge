@@ -197,7 +197,8 @@ int write_live_state(agent_state* state) {
     }
 
     int64_t timestamp = ecopost_simulated_timestamp(state);
-    double percent = stats.buffered_points ? ((double)stats.buffered_points * 100.0 / (double)BUFFER_CAPACITY) : 0.0;
+    size_t buffer_capacity = (size_t)BUFFER_CAPACITY;
+    double percent = stats.buffered_points ? ((double)stats.buffered_points * 100.0 / (double)buffer_capacity) : 0.0;
     int block_created = stats.buffered_points < 12u;
     storage_totals storage = collect_storage_totals(state);
 
@@ -228,12 +229,12 @@ int write_live_state(agent_state* state) {
     fprintf(out, "  \"wal\": {\"status\":\"protected\",\"last_write\":true,\"entries_since_flush\":%zu,\"replayed\":%s},\n",
             stats.buffered_points * SERIES_COUNT,
             state->wal_replayed ? "true" : "false");
-    fprintf(out, "  \"buffer\": {\"points\":%zu,\"capacity\":%u,\"percent\":%.2f},\n",
+    fprintf(out, "  \"buffer\": {\"points\":%zu,\"capacity\":%zu,\"percent\":%.2f},\n",
             stats.buffered_points,
-            BUFFER_CAPACITY,
+            buffer_capacity,
             percent);
-    fprintf(out, "  \"compression\": {\"active\":true,\"last_block_points\":%u,\"last_block_created\":%s,\"algorithm\":\"delta-of-delta + XOR\"},\n",
-            BUFFER_CAPACITY,
+    fprintf(out, "  \"compression\": {\"active\":true,\"last_block_points\":%zu,\"last_block_created\":%s,\"algorithm\":\"delta-of-delta + XOR\"},\n",
+            buffer_capacity,
             block_created ? "true" : "false");
     fprintf(out,
             "  \"storage\": {\"raw_size_estimate_bytes\":%llu,\"compressed_size_bytes\":%llu,\"compression_ratio\":%.6f,\"bytes_per_point\":%.6f},\n",
@@ -288,6 +289,63 @@ int write_live_state(agent_state* state) {
         fputs("null", out);
     }
     fputs("},\n", out);
+    fputs("  \"window_aggregate\": {", out);
+    fprintf(out,
+            "\"available\":true,\"last_run\":%s,\"ok\":%s,\"series\":",
+            state->window_aggregate.last_run ? "true" : "false",
+            state->window_aggregate.ok ? "true" : "false");
+    if (state->window_aggregate.series[0]) {
+        write_json_string(out, state->window_aggregate.series);
+    } else {
+        fputs("null", out);
+    }
+    fprintf(out,
+            ",\"window_size\":%lld,\"window_count\":%zu,\"source_points_estimate\":%zu,\"downsample_ratio\":%.6f,\"query_seconds\":%.9f,\"global_min\":%.6f,\"global_max\":%.6f,\"weighted_avg\":%.6f,\"min\":%.6f,\"max\":%.6f,\"avg_of_avgs\":%.6f",
+            (long long)state->window_aggregate.window_size,
+            state->window_aggregate.window_count,
+            state->window_aggregate.source_points_estimate,
+            state->window_aggregate.downsample_ratio,
+            state->window_aggregate.query_seconds,
+            state->window_aggregate.min_value,
+            state->window_aggregate.max_value,
+            state->window_aggregate.weighted_avg,
+            state->window_aggregate.min_value,
+            state->window_aggregate.max_value,
+            state->window_aggregate.avg_of_avgs);
+    fputs(",\"first\":", out);
+    if (state->window_aggregate.window_count > 0) {
+        fprintf(out,
+                "{\"start\":%lld,\"end\":%lld,\"count\":%llu,\"min\":%.6f,\"max\":%.6f,\"avg\":%.6f}",
+                (long long)state->window_aggregate.first.window_start,
+                (long long)state->window_aggregate.first.window_end,
+                (unsigned long long)state->window_aggregate.first.count,
+                state->window_aggregate.first.min,
+                state->window_aggregate.first.max,
+                state->window_aggregate.first.avg);
+    } else {
+        fputs("null", out);
+    }
+    fputs(",\"last\":", out);
+    if (state->window_aggregate.window_count > 0) {
+        fprintf(out,
+                "{\"start\":%lld,\"end\":%lld,\"count\":%llu,\"min\":%.6f,\"max\":%.6f,\"avg\":%.6f}",
+                (long long)state->window_aggregate.last.window_start,
+                (long long)state->window_aggregate.last.window_end,
+                (unsigned long long)state->window_aggregate.last.count,
+                state->window_aggregate.last.min,
+                state->window_aggregate.last.max,
+                state->window_aggregate.last.avg);
+    } else {
+        fputs("null", out);
+    }
+    fputs(",\"message\":", out);
+    if (state->window_aggregate.message[0]) {
+        write_json_string(out, state->window_aggregate.message);
+    } else {
+        fputs("null", out);
+    }
+    fputs("},\n", out);
+
     fputs("  \"last_command\": {", out);
     if (state->last_command.name[0]) {
         fputs("\"name\":", out);

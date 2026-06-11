@@ -10,11 +10,13 @@ export const commandSchema = z.object({
     "append_one",
     "append_100",
     "append_1000",
+    "append_custom",
     "append_batch",
     "flush_all",
     "read_last_range",
     "aggregate_avg",
     "aggregate_min_max",
+    "window_aggregate",
     "run_retention",
     "export_csv",
     "verify_db",
@@ -24,7 +26,9 @@ export const commandSchema = z.object({
     "pause",
     "resume"
   ]),
-  series: z.string().optional()
+  series: z.string().optional(),
+  window_size: z.coerce.number().int().optional(),
+  points: z.coerce.number().int().optional()
 });
 
 export const liveStateSchema = z.object({
@@ -169,6 +173,67 @@ export const liveStateSchema = z.object({
       min: 0,
       max: 0,
       duration_ms: 0
+    }),
+  window_aggregate: z
+    .object({
+      available: z.boolean().default(true),
+      last_run: z.boolean().default(false),
+      ok: z.boolean().default(false),
+      series: z.string().nullable().default(null),
+      window_size: z.number().default(0),
+      window_count: z.number().default(0),
+      source_points_estimate: z.number().default(0),
+      downsample_ratio: z.number().default(0),
+      query_seconds: z.number().default(0),
+      global_min: z.number().default(0),
+      global_max: z.number().default(0),
+      weighted_avg: z.number().default(0),
+      min: z.number().default(0),
+      max: z.number().default(0),
+      avg_of_avgs: z.number().default(0),
+      first: z
+        .object({
+          start: z.number(),
+          end: z.number(),
+          count: z.number(),
+          min: z.number(),
+          max: z.number(),
+          avg: z.number()
+        })
+        .nullable()
+        .default(null),
+      last: z
+        .object({
+          start: z.number(),
+          end: z.number(),
+          count: z.number(),
+          min: z.number(),
+          max: z.number(),
+          avg: z.number()
+        })
+        .nullable()
+        .default(null),
+      message: z.string().nullable().default(null)
+    })
+    .default({
+      available: true,
+      last_run: false,
+      ok: false,
+      series: null,
+      window_size: 0,
+      window_count: 0,
+      source_points_estimate: 0,
+      downsample_ratio: 0,
+      query_seconds: 0,
+      global_min: 0,
+      global_max: 0,
+      weighted_avg: 0,
+      min: 0,
+      max: 0,
+      avg_of_avgs: 0,
+      first: null,
+      last: null,
+      message: null
     }),
   verify: z
     .object({

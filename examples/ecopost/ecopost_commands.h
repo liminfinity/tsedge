@@ -8,6 +8,10 @@
 typedef struct {
     char command[64];
     char series[128];
+    int64_t window_size;
+    int window_size_set;
+    int64_t points;
+    int points_set;
 } agent_command;
 
 /* Reads one pending command from command.json, if present. */

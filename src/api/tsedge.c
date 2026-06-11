@@ -1,6 +1,7 @@
 #include "tsedge.h"
 #include "csv.h"
 #include "db.h"
+#include "db_quota.h"
 #include "series.h"
 #include "series_delete.h"
 #include "series_list.h"
@@ -8,6 +9,7 @@
 #include "series_retention.h"
 #include "series_stats.h"
 #include "verify.h"
+#include "wal.h"
 
 #include <stdlib.h>
 
@@ -33,6 +35,49 @@ int tsedge_create_series(tsedge_db* db, const char* name) {
     return tsedge_db_create_series_internal(db, name);
 }
 
+int tsedge_set_durability(tsedge_db* db, tsedge_durability_mode mode) {
+    if (!db ||
+        (mode != TSEDGE_DURABILITY_FAST &&
+         mode != TSEDGE_DURABILITY_BALANCED &&
+         mode != TSEDGE_DURABILITY_STRICT)) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_wal_flush(db);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    db->durability = mode;
+    return TSEDGE_OK;
+}
+
+int tsedge_set_disk_quota(tsedge_db* db, uint64_t max_bytes) {
+    if (!db) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    db->disk_quota_bytes = max_bytes;
+    db->disk_quota_exceeded = 0;
+    return TSEDGE_OK;
+}
+
+int tsedge_get_disk_quota(tsedge_db* db, uint64_t* out_max_bytes) {
+    if (!db || !out_max_bytes) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    *out_max_bytes = db->disk_quota_bytes;
+    return TSEDGE_OK;
+}
+
+int tsedge_enforce_disk_quota(tsedge_db* db) {
+    if (!db) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_wal_flush(db);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    return tsedge_db_enforce_disk_quota(db);
+}
+
 int tsedge_delete_series(tsedge_db* db, const char* series_name) {
     if (!db) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
@@ -48,6 +93,9 @@ int tsedge_append(tsedge_db* db, const char* series_name, int64_t timestamp, dou
     if (!db) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
+    if (db->disk_quota_exceeded) {
+        return TSEDGE_ERR_QUOTA_EXCEEDED;
+    }
     int rc = tsedge_series_validate_name(series_name);
     if (rc != TSEDGE_OK) {
         return rc;
@@ -59,12 +107,38 @@ int tsedge_append(tsedge_db* db, const char* series_name, int64_t timestamp, dou
     return tsedge_series_append(db, series, timestamp, value);
 }
 
+int tsedge_get_series_handle(tsedge_db* db, const char* series_name, tsedge_series_handle** out_handle) {
+    if (!db || !out_handle) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_series_validate_name(series_name);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    return tsedge_db_get_series_handle(db, series_name, out_handle);
+}
+
+int tsedge_append_handle(tsedge_db* db, tsedge_series_handle* handle, int64_t timestamp, double value) {
+    if (db && db->disk_quota_exceeded) {
+        return TSEDGE_ERR_QUOTA_EXCEEDED;
+    }
+    tsedge_series* series = NULL;
+    int rc = tsedge_db_resolve_series_handle(db, handle, &series);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    return tsedge_series_append(db, series, timestamp, value);
+}
+
 int tsedge_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count) {
     if (!db || (!points && count > 0)) {
         return TSEDGE_ERR_INVALID_ARGUMENT;
     }
     if (count == 0) {
         return TSEDGE_OK;
+    }
+    if (db->disk_quota_exceeded) {
+        return TSEDGE_ERR_QUOTA_EXCEEDED;
     }
     int rc = tsedge_series_validate_name(series_name);
     if (rc != TSEDGE_OK) {
@@ -73,6 +147,24 @@ int tsedge_append_batch(tsedge_db* db, const char* series_name, const tsedge_poi
     tsedge_series* series = tsedge_db_find_series(db, series_name);
     if (!series) {
         return TSEDGE_ERR_NOT_FOUND;
+    }
+    return tsedge_series_append_batch(db, series, points, count);
+}
+
+int tsedge_append_batch_handle(tsedge_db* db, tsedge_series_handle* handle, const tsedge_point* points, size_t count) {
+    if (!db || !handle || (!points && count > 0)) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    if (count == 0) {
+        return TSEDGE_OK;
+    }
+    if (db->disk_quota_exceeded) {
+        return TSEDGE_ERR_QUOTA_EXCEEDED;
+    }
+    tsedge_series* series = NULL;
+    int rc = tsedge_db_resolve_series_handle(db, handle, &series);
+    if (rc != TSEDGE_OK) {
+        return rc;
     }
     return tsedge_series_append_batch(db, series, points, count);
 }
@@ -163,7 +255,7 @@ int tsedge_read_range(
     if (!series) {
         return TSEDGE_ERR_NOT_FOUND;
     }
-    return tsedge_series_read_range(series, from_timestamp, to_timestamp, callback, user_data);
+    return tsedge_series_read_range(db, series, from_timestamp, to_timestamp, callback, user_data);
 }
 
 int tsedge_aggregate(
@@ -185,7 +277,34 @@ int tsedge_aggregate(
     if (!series) {
         return TSEDGE_ERR_NOT_FOUND;
     }
-    return tsedge_series_aggregate(series, from_timestamp, to_timestamp, type, out_result);
+    return tsedge_series_aggregate(db, series, from_timestamp, to_timestamp, type, out_result);
+}
+
+int tsedge_aggregate_windowed(
+    tsedge_db* db,
+    const char* series_name,
+    int64_t start_time,
+    int64_t end_time,
+    int64_t window_size,
+    tsedge_window_aggregate** out_windows,
+    size_t* out_count
+) {
+    if (!db || !out_windows || !out_count || window_size <= 0 || start_time > end_time) {
+        return TSEDGE_ERR_INVALID_ARGUMENT;
+    }
+    int rc = tsedge_series_validate_name(series_name);
+    if (rc != TSEDGE_OK) {
+        return rc;
+    }
+    tsedge_series* series = tsedge_db_find_series(db, series_name);
+    if (!series) {
+        return TSEDGE_ERR_NOT_FOUND;
+    }
+    return tsedge_series_aggregate_windowed(db, series, start_time, end_time, window_size, out_windows, out_count);
+}
+
+void tsedge_free_window_aggregates(tsedge_window_aggregate* windows) {
+    free(windows);
 }
 
 int tsedge_export_csv(
@@ -224,6 +343,8 @@ const char* tsedge_strerror(int status) {
             return "corrupt data";
         case TSEDGE_ERR_INTERNAL:
             return "internal error";
+        case TSEDGE_ERR_QUOTA_EXCEEDED:
+            return "disk quota exceeded";
         default:
             return "unknown error";
     }

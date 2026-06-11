@@ -17,6 +17,9 @@ int tsedge_wal_append(tsedge_db* db, const char* series_name, const tsedge_point
 /* Appends a batch of accepted points to the WAL in series order. */
 int tsedge_wal_append_batch(tsedge_db* db, const char* series_name, const tsedge_point* points, size_t count);
 
+/* Flushes buffered WAL bytes to wal.log. */
+int tsedge_wal_flush(tsedge_db* db);
+
 /* Replays WAL entries into series buffers during database open. */
 int tsedge_wal_replay(tsedge_db* db);
 

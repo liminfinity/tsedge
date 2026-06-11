@@ -20,6 +20,7 @@ struct tsedge_db;
 typedef struct tsedge_series {
     char* name;
     char* dir_path;
+    uint64_t generation;
     uint32_t active_segment_id;
     char* active_segment_path;
     uint32_t* segment_ids;

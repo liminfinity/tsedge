@@ -73,15 +73,21 @@ export default function Page() {
     return () => window.clearInterval(timer);
   }, []);
 
-  async function sendCommand(command: DemoCommand, series?: string) {
+  async function sendCommand(command: DemoCommand, options?: { series?: string; window_size?: number; points?: number }) {
     setPendingCommand(command);
     setCommandError("");
     setCommandMessage("");
     try {
+      const payload = {
+        command,
+        ...(options?.series ? { series: options.series } : {}),
+        ...(options?.window_size !== undefined ? { window_size: options.window_size } : {}),
+        ...(options?.points !== undefined ? { points: options.points } : {})
+      };
       const response = await fetch("/api/command", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(series ? { command, series } : { command })
+        body: JSON.stringify(payload)
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
@@ -138,7 +144,7 @@ export default function Page() {
         <CsvPanel
           state={state}
           pending={pendingCommand === "export_csv"}
-          onExport={(series) => sendCommand("export_csv", series)}
+          onExport={(series) => sendCommand("export_csv", { series })}
         />
       </div>
       <OperationResultPanel state={state} />

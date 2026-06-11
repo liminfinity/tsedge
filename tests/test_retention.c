@@ -177,8 +177,9 @@ void test_delete_before_reopen(void) {
 void test_delete_before_append_after_delete(void) {
     const char* path = temp_path("delete_append");
     size_t count = (size_t)TSEDGE_BLOCK_MAX_POINTS * 3u;
+    int64_t newer_start = (int64_t)count + 1000;
     tsedge_point* points = make_linear_points(count, 0);
-    tsedge_point* newer = make_linear_points((size_t)TSEDGE_BLOCK_MAX_POINTS * 2u, 20000);
+    tsedge_point* newer = make_linear_points((size_t)TSEDGE_BLOCK_MAX_POINTS * 2u, newer_start);
     CHECK(points != NULL);
     CHECK(newer != NULL);
 
@@ -200,7 +201,7 @@ void test_delete_before_append_after_delete(void) {
     db = NULL;
     CHECK_OK(tsedge_open(path, &db));
     size_t read_count = 0;
-    CHECK_OK(tsedge_read_range(db, "s", 20000, 20000 + (int64_t)TSEDGE_BLOCK_MAX_POINTS * 2 - 1, count_cb, &read_count));
+    CHECK_OK(tsedge_read_range(db, "s", newer_start, newer_start + (int64_t)TSEDGE_BLOCK_MAX_POINTS * 2 - 1, count_cb, &read_count));
     CHECK(read_count == (size_t)TSEDGE_BLOCK_MAX_POINTS * 2u);
     CHECK_OK(tsedge_close(db));
     free(points);
