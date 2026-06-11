@@ -47,8 +47,8 @@ tsedge = ["native/*.dylib", "native/*.so", "native/*.dll"]
 [tool.cibuildwheel]
 build = "cp310-*"
 skip = "*-musllinux_*"
-before-build = "python scripts/build_native.py"
-test-command = "python scripts/wheel_runtime_test.py"
+before-build = "python {package}/scripts/build_native.py"
+test-command = "python {package}/scripts/wheel_runtime_test.py"
 
 [tool.cibuildwheel.linux]
 before-all = "python -m pip install cmake"
