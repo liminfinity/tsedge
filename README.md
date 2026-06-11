@@ -346,23 +346,23 @@ cmake --build build-sanitize
 ctest --test-dir build-sanitize --output-on-failure
 ```
 
-## Панель метеопоста и диагностика TSEdge
+## Weather Station Dashboard and TSEdge Diagnostics
 
-Интерактивная демонстрация показывает автономный экологический пост:
+The interactive demo shows a standalone environmental monitoring station:
 
 ```text
 C-agent -> TSEdge -> live_state.json -> Next.js simulator
 ```
 
-C-agent пишет реальные точки в TSEdge через публичный API. Сайт не подключается
-к базе и не является сервером TSEdge. Он читает файлы состояния C-программы и
-пишет команды в `command.json`.
+The C agent writes real points to TSEdge through the public API. The website
+does not connect to the database and is not a TSEdge server. It reads state
+files produced by the C program and writes commands to `command.json`.
 
-Код demo-agent лежит в `examples/ecopost/` и разделён по ответственности:
-конфигурация, состояние, генерация датчиков, команды, операции с TSEdge,
-запись `live_state.json` и файловые helper-функции.
+The demo agent code lives in `examples/ecopost/` and is split by
+responsibility: configuration, state, sensor generation, commands, TSEdge
+operations, `live_state.json` output and filesystem helper functions.
 
-Собрать и запустить агент:
+Build and run the agent:
 
 ```bash
 mkdir build
@@ -373,7 +373,7 @@ ctest --output-on-failure
 ./tsedge_ecopost_agent --live --interval-ms 1000
 ```
 
-Запустить сайт в другом терминале:
+Run the website in another terminal:
 
 ```bash
 cd demo/system-simulator
@@ -381,21 +381,22 @@ npm install
 TSEDGE_LIVE_OUTPUT=../../build/ecopost_live_output npm run dev
 ```
 
-Открыть `http://localhost:3000`. Это пользовательская панель метеопоста:
-температура, влажность, давление, ветер, PM2.5, аккумулятор и состояние связи.
+Open `http://localhost:3000`. This is the end-user weather station dashboard:
+temperature, humidity, pressure, wind, PM2.5, battery and connection status.
 
-Инженерная диагностика доступна на `http://localhost:3000/diagnostics`. Она
-показывает WAL, буфер, сжатые blocks, segment-файлы, очистку старых данных и
-выгрузку CSV.
+Engineering diagnostics are available at `http://localhost:3000/diagnostics`.
+This page shows the WAL, buffer, compressed blocks, segment files, old-data
+cleanup and CSV export.
 
-Диагностическая панель может выгрузить CSV для выбранного ряда. UI пишет в
-`command.json` имя ряда, например:
+The diagnostics page can export CSV for a selected series. The UI writes the
+series name to `command.json`, for example:
 
 ```json
 {"command":"export_csv","series":"pm25.concentration"}
 ```
 
-C-agent вызывает `tsedge_export_csv` и сохраняет файл в output-директории.
+The C agent calls `tsedge_export_csv` and saves the file in the output
+directory.
 
 ## Deleting Old Data
 

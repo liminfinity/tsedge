@@ -1,29 +1,30 @@
-# Панель метеопоста и диагностика TSEdge
+# Weather Station Dashboard and TSEdge Diagnostics
 
-Локальное веб-приложение для demo-агента TSEdge.
+Local web application for the TSEdge demo agent.
 
-В приложении две страницы:
+The application has two pages:
 
-- `/` — панель метеопоста для конечного пользователя;
-- `/diagnostics` — инженерная диагностика TSEdge.
+- `/` - end-user weather station dashboard;
+- `/diagnostics` - engineering diagnostics for TSEdge.
 
-Панель метеопоста показывает текущие измерения, связь, аккумулятор, состояние
-воздуха и события станции. Диагностика показывает путь записи:
+The weather station dashboard shows current measurements, connection status,
+battery, air quality and station events. The diagnostics page shows the write
+path:
 
 ```text
-Датчики -> C-agent -> API -> WAL -> буфер -> block -> segment-файлы
+Sensors -> C agent -> API -> WAL -> buffer -> block -> segment files
 ```
 
-Сайт не является сервером TSEdge. Он читает `live_state.json` и отправляет
-команды в `command.json`. База остаётся embedded C-библиотекой.
+The website is not a TSEdge server. It reads `live_state.json` and sends
+commands through `command.json`. The database remains an embedded C library.
 
-Код C-agent находится в `examples/ecopost/`. Он разделён на модули:
-конфигурация, состояние, датчики, команды, операции с TSEdge, вывод JSON и
-файловые helper-функции.
+The C agent code lives in `examples/ecopost/`. It is split into modules for
+configuration, state, sensors, commands, TSEdge operations, JSON output and
+filesystem helper functions.
 
-## Запуск
+## Running
 
-Собрать C-проект:
+Build the C project:
 
 ```bash
 mkdir build
@@ -33,13 +34,13 @@ cmake --build .
 ctest --output-on-failure
 ```
 
-Запустить C-agent:
+Run the C agent:
 
 ```bash
 ./tsedge_ecopost_agent --live --interval-ms 1000
 ```
 
-В другом терминале запустить сайт:
+Run the website in another terminal:
 
 ```bash
 cd demo/system-simulator
@@ -47,99 +48,99 @@ npm install
 TSEDGE_LIVE_OUTPUT=../../build/ecopost_live_output npm run dev
 ```
 
-Открыть:
+Open:
 
 ```text
 http://localhost:3000
 ```
 
-Перейти к диагностике:
+Open diagnostics:
 
 ```text
 http://localhost:3000/diagnostics
 ```
 
-## Команды
+## Commands
 
-- Пауза;
-- Продолжить;
-- Потерять связь;
-- Восстановить связь;
-- Всплеск PM2.5;
-- Добавить 1 точку;
-- Добавить 100;
-- Добавить 1000;
-- Добавить выбранное количество точек;
-- Batch-запись;
-- Сбросить буфер;
-- Прочитать диапазон;
+- Pause;
+- Resume;
+- Drop connection;
+- Restore connection;
+- PM2.5 spike;
+- Add 1 point;
+- Add 100;
+- Add 1000;
+- Add the selected number of points;
+- Batch write;
+- Flush buffer;
+- Read range;
 - AVG;
 - MIN/MAX;
-- Агрегация по окнам;
-- Сбой;
-- Восстановить из WAL;
-- Очистить старые данные;
-- Выгрузить CSV;
-- Проверить базу;
-- Выгрузить CSV для выбранного ряда;
-- Создать тестовый ряд `debug.temp`;
-- Удалить тестовый ряд `debug.temp`;
-- Сбросить demo.
+- Window aggregation;
+- Crash;
+- Recover from WAL;
+- Delete old data;
+- Export CSV;
+- Verify database;
+- Export CSV for the selected series;
+- Create test series `debug.temp`;
+- Delete test series `debug.temp`;
+- Reset demo.
 
-Команды пишутся в `ecopost_live_output/command.json`. C-agent читает файл,
-выполняет команду и удаляет его.
+Commands are written to `ecopost_live_output/command.json`. The C agent reads
+the file, executes the command and deletes it.
 
-Для CSV можно передать ряд:
+For CSV export, pass a series:
 
 ```json
 {"command":"export_csv","series":"pm25.concentration"}
 ```
 
-Для произвольной записи можно передать точное количество точек:
+For custom writes, pass the exact number of points:
 
 ```json
 {"command":"append_custom","points":10000}
 ```
 
-Для downsampling можно запустить оконную агрегацию по выбранному ряду:
+For downsampling, run window aggregation on the selected series:
 
 ```json
 {"command":"window_aggregate","series":"air.temperature","window_size":1000}
 ```
 
-Агент вызывает `tsedge_aggregate_windowed` и сохраняет в `live_state.json`
-только summary: количество окон, число исходных точек, ratio, время запроса,
-global MIN/MAX/AVG, первое и последнее окно.
+The agent calls `tsedge_aggregate_windowed` and stores only a summary in
+`live_state.json`: window count, input point count, ratio, query time, global
+MIN/MAX/AVG and the first and last window.
 
-## Проверка интерфейса
+## Interface Check
 
-Перед показом на защите:
+Before the defense/demo presentation:
 
 ```bash
 cd build
 ./tsedge_ecopost_agent --live --interval-ms 100
 ```
 
-На сайте нажать:
+Use the website controls:
 
-- «Потерять связь» — запись должна продолжаться локально;
-- «Восстановить связь» — связь снова зелёная;
-- «Всплеск PM2.5» — событие появляется в ленте;
-- «Добавить 100» — в блоке результата видно, сколько точек добавлено;
-- «Добавить» в поле количества — добавляет ровно указанное число точек;
-- «Batch-запись» — проверяется пакетная запись через API;
-- «Сбросить буфер» — buffered points должны стать нулём;
-- «Прочитать диапазон», «AVG», «MIN/MAX» — появляется результат запроса;
-- «Агрегация по окнам» — выбрать ряд и размер окна, затем увидеть compact summary;
-- «Сбой» — агент переходит в состояние сбоя;
-- «Восстановить из WAL» — агент возвращается после сбоя;
-- «Очистить старые данные» — удаляются старые segment-файлы или показывается, что старых файлов нет;
-- «Выгрузить CSV» — выбрать ряд, файл готовится только при наличии связи;
-- «Проверить базу» — в панели появляется результат проверки;
-- «Создать тестовый ряд» — создаёт `debug.temp` и пишет в него точки;
-- «Удалить тестовый ряд» — удаляет `debug.temp` без затрагивания рядов метеопоста;
-- на панели метеопоста «Выгрузить CSV» — появляется статус CSV.
+- "Drop connection" - writes should continue locally;
+- "Restore connection" - the connection indicator should turn green again;
+- "PM2.5 spike" - an event should appear in the feed;
+- "Add 100" - the result panel should show how many points were added;
+- "Add" in the custom count field - adds exactly the requested number of points;
+- "Batch write" - verifies batch writes through the API;
+- "Flush buffer" - buffered points should become zero;
+- "Read range", "AVG", "MIN/MAX" - a query result should appear;
+- "Window aggregation" - select a series and window size, then inspect the compact summary;
+- "Crash" - the agent enters the crashed state;
+- "Recover from WAL" - the agent returns after the crash;
+- "Delete old data" - old segment files are removed, or the UI reports that none exist;
+- "Export CSV" - select a series; the file is prepared only when connected;
+- "Verify database" - the panel shows the verification result;
+- "Create test series" - creates `debug.temp` and writes points to it;
+- "Delete test series" - deletes `debug.temp` without touching weather station series;
+- "Export CSV" on the weather station dashboard - shows CSV status.
 
-Если агент не запущен, сайт должен показать короткую инструкцию запуска, а не
-белый экран. Сайт не подключается к базе напрямую и не является сервером
-TSEdge.
+If the agent is not running, the website should show short startup
+instructions instead of a blank page. The website does not connect directly to
+the database and is not a TSEdge server.
