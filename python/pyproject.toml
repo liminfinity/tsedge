@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tsedge"
+version = "0.1.1"
+description = "Python ctypes binding for the TSEdge embedded time-series storage library."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Artyom Poleshko" }
+]
+keywords = ["time-series", "embedded", "storage", "ctypes", "edge"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/liminfinity/tsedge"
+Documentation = "https://github.com/liminfinity/tsedge/tree/main/python"
+Issues = "https://github.com/liminfinity/tsedge/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tsedge = ["native/*.dylib", "native/*.so", "native/*.dll"]
+
+[tool.cibuildwheel]
+build = "cp310-*"
+skip = "*-musllinux_*"
+before-build = "python scripts/build_native.py"
+test-command = "python scripts/wheel_runtime_test.py"
+
+[tool.cibuildwheel.linux]
+before-all = "python -m pip install cmake"
+
+[tool.cibuildwheel.macos]
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }

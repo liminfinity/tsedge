@@ -49,6 +49,15 @@ venv/
 env/
 __pycache__/
 *.pyc
+python/dist/
+python/build/
+python/*.egg-info/
+python/src/*.egg-info/
+python/src/tsedge/native/*.dylib
+python/src/tsedge/native/*.so
+python/src/tsedge/native/*.dll
+wheelhouse/
+build-python-wheel/
 
 # Jupyter caches
 *.ipynb_checkpoints/
