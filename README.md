@@ -1,6 +1,10 @@
 # TSEdge
 
-![CI](https://github.com/liminfinity/tsedge/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/liminfinity/tsedge/actions/workflows/ci.yml/badge.svg)](https://github.com/liminfinity/tsedge/actions/workflows/ci.yml)
+[![Build Python wheels](https://github.com/liminfinity/tsedge/actions/workflows/build_python_wheels.yml/badge.svg)](https://github.com/liminfinity/tsedge/actions/workflows/build_python_wheels.yml)
+[![PyPI](https://img.shields.io/pypi/v/tsedge.svg)](https://pypi.org/project/tsedge/)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/tsedge?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/tsedge)
+[![License](https://img.shields.io/github/license/liminfinity/tsedge.svg)](LICENSE)
 
 TSEdge is a small embedded C11 time-series storage library for Linux edge
 devices. Applications include `tsedge.h`, link with `libtsedge`, and call the
