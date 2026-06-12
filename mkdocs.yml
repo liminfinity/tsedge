@@ -1,0 +1,55 @@
+site_name: TSEdge
+site_description: Embedded C11 time-series storage for edge devices
+site_url: https://liminfinity.github.io/tsedge/
+repo_url: https://github.com/liminfinity/tsedge
+repo_name: liminfinity/tsedge
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: black
+      accent: blue
+    - scheme: slate
+      primary: black
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+      - Supported Platforms: getting-started/platforms.md
+  - Concepts:
+      - Architecture: concepts/architecture.md
+      - Storage Format: concepts/storage-format.md
+      - WAL and Durability: concepts/wal-durability.md
+      - Disk Quota: concepts/disk-quota.md
+  - API:
+      - C API: api/c-api.md
+      - Python API: api/python-api.md
+  - Examples:
+      - Python Examples: examples/python-examples.md
+      - C Example: examples/c-example.md
+  - Benchmarks: benchmarks.md
+  - Release Notes: release-notes.md

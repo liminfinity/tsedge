@@ -11,6 +11,12 @@ devices. Applications include `tsedge.h`, link with `libtsedge`, and call the
 API directly. It is not a server and does not implement SQL, networking, MQTT,
 replication, access control, or lossy compression.
 
+## Documentation
+
+The documentation site is available on GitHub Pages:
+
+https://liminfinity.github.io/tsedge/
+
 ## Build
 
 ```bash

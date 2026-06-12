@@ -58,6 +58,7 @@ python/src/tsedge/native/*.so
 python/src/tsedge/native/*.dll
 wheelhouse/
 build-python-wheel/
+site/
 
 # Jupyter caches
 *.ipynb_checkpoints/
