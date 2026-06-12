@@ -1,6 +1,8 @@
 # WAL and Durability
 
-The write-ahead log (WAL) stores points accepted by append operations before they are flushed into compressed segment blocks. On open, TSEdge can replay complete WAL records to recover accepted data after a process crash.
+The write-ahead log (WAL) is the recovery bridge between an append call and a compressed segment block.
+
+When an append is accepted, TSEdge records it in the WAL before relying on the in-memory buffer. If the process crashes before the buffer is flushed to a segment, the next `tsedge_open` can replay complete WAL records.
 
 ## Recovery behavior
 
@@ -27,4 +29,4 @@ STRICT flushes WAL data on every append or batch append. It provides the stronge
 
 ## Flush and close
 
-`tsedge_flush`, `tsedge_flush_all` and `tsedge_close` flush pending data through the normal WAL and segment path before completing.
+`tsedge_flush`, `tsedge_flush_all` and `tsedge_close` flush pending data through the normal WAL and segment path before completing. For most applications, closing the database cleanly is enough to persist the current buffers into segment files.

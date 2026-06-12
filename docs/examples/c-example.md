@@ -1,6 +1,6 @@
 # C Example
 
-Applications use TSEdge by including the public header and linking with the native library.
+Applications use TSEdge by including the public header and linking with the native library. The library is embedded in your process; there is no server to start.
 
 ```c
 #include <tsedge.h>
@@ -28,7 +28,7 @@ int main(void) {
 
 ## Compile with `cc`
 
-If TSEdge is installed under `$HOME/.local`:
+If TSEdge is installed under `$HOME/.local`, compile and run with:
 
 ```bash
 cc app.c -I$HOME/.local/include -L$HOME/.local/lib -ltsedge -o app
@@ -50,3 +50,5 @@ cmake --build build
 ```
 
 The repository also includes `examples/tsedge_demo.c`, which demonstrates the public API flow.
+
+For larger applications, prefer a small CMake target that links against `tsedge` or `tsedge_static` instead of writing compiler flags by hand.

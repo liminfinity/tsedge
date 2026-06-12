@@ -1,6 +1,6 @@
 # Python Examples
 
-Example scripts live in `python/examples/`.
+Example scripts live in `python/examples/`. They are intentionally small and use the public Python package, so they are a good way to learn the API before reading the C implementation.
 
 Run them from the `python/` directory after installing a bundled wheel:
 
@@ -32,8 +32,10 @@ python3 python/examples/basic_usage.py
 
 ## Available examples
 
-- `basic_usage.py`: open a database, create a series, write points and query aggregates.
-- `batch_write.py`: write many points in batches.
-- `read_and_aggregate.py`: read ranges and compute aggregates.
-- `window_aggregate.py`: produce compact windows for chart-style queries.
-- `sensor_simulation.py`: simulate multiple sensor series and export CSV.
+- `basic_usage.py`: the shortest end-to-end example.
+- `batch_write.py`: batch ingestion for larger point sets.
+- `read_and_aggregate.py`: range reads and aggregate queries.
+- `window_aggregate.py`: compact buckets for chart-style views.
+- `sensor_simulation.py`: a more realistic multi-series sensor workflow with CSV export.
+
+If you are new to the project, start with `basic_usage.py`, then move to `sensor_simulation.py`.

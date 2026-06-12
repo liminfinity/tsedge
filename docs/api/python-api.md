@@ -1,6 +1,6 @@
 # Python API
 
-The `tsedge` Python package is a `ctypes` wrapper around the embedded C API.
+The `tsedge` Python package is a small `ctypes` wrapper around the embedded C API. It keeps the Python surface convenient while still using the same native storage engine as C applications.
 
 ## Main classes and enums
 
@@ -27,6 +27,8 @@ with TSEdge.open("sensor_db") as db:
     db.create_series("air.temperature")
 ```
 
+The context manager closes the database when the block exits.
+
 ## Writing data
 
 ```python
@@ -47,6 +49,8 @@ db.append_handle(handle, 4, 40.0)
 db.append_batch_handle(handle, [(5, 50.0), (6, 60.0)])
 ```
 
+For most scripts, `append_batch` is already enough. Handles are useful when ingestion code writes many batches to the same series.
+
 ## Reading and aggregates
 
 ```python
@@ -58,6 +62,8 @@ windows = db.aggregate_windowed("air.temperature", 1, 1001, 100)
 ```
 
 `read_range` returns copied `Point` objects. `aggregate_windowed` returns non-empty `WindowAggregate` buckets.
+
+The aggregate argument can be an `Aggregate` enum value, a case-insensitive string such as `"avg"`, or the corresponding integer value.
 
 ## Verification and CSV export
 
@@ -74,6 +80,8 @@ from tsedge import verify_database
 report = verify_database("sensor_db")
 ```
 
+`verify()` returns a report object instead of printing. This makes it easy to use from tests and diagnostic tools.
+
 ## Disk quota
 
 ```python
@@ -84,3 +92,12 @@ db.enforce_disk_quota()
 ## Error handling
 
 Most methods raise `TSEdgeError` when the native library returns a negative status code. The exception exposes both `code` and `message`.
+
+```python
+from tsedge import TSEdgeError
+
+try:
+    db.read_range("missing.series", 0, 10)
+except TSEdgeError as exc:
+    print(exc.code, exc.message)
+```

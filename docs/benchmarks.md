@@ -1,6 +1,11 @@
 # Benchmarks
 
-TSEdge benchmarks measure whether the engine is suitable for local numeric time-series storage on edge devices.
+Benchmarks answer two practical questions:
+
+- How fast can TSEdge write and read local time-series data?
+- How much space do compressed segment files save compared with simple formats?
+
+The numbers are meant to be reproducible and useful for comparison. They are not a claim that TSEdge is faster than every existing time-series database.
 
 ## Setup
 
@@ -31,22 +36,32 @@ Metrics:
 
 ## Running
 
+Build the benchmark programs first:
+
 ```bash
 mkdir build
 cd build
 cmake ..
 cmake --build .
+```
 
+Then run the main comparison programs:
+
+```bash
 ./tsedge_bench 1000000
 ./file_bench 1000000
 ./sqlite_bench 1000000
 ```
 
-The benchmark programs can also write CSV result files for analysis.
+If SQLite was not found by CMake, `sqlite_bench` is not built. The TSEdge and file benchmarks can still run.
+
+The benchmark programs can also write CSV result files for notebook or spreadsheet analysis.
 
 ## Block-size tuning results
 
-The following table is copied from the current repository benchmark notes. It reflects the benchmark workload used when the default block size was selected.
+Block size controls how many points are compressed into one block. Small blocks can reduce extra decoding for tiny ranges. Larger blocks reduce metadata overhead and often improve full scans.
+
+The following table reflects the benchmark workload used when the default block size was selected.
 
 | Block size, points | Batch fast, points/sec | Append fast, points/sec | Tiny read, sec | Small read, sec | Full read, points/sec | AVG full, sec | MIN/MAX full, sec | Compression ratio | Bytes/point | Block count |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -58,4 +73,6 @@ The following table is copied from the current repository benchmark notes. It re
 
 The default block size is `16384` points.
 
-Additional benchmark details are available in the repository's legacy benchmark notes and scripts.
+For the current workload, it gives a good balance between write throughput, full-range reads and small-range query overhead.
+
+Additional benchmark details are available in the repository's benchmark notes and scripts.

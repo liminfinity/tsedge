@@ -1,5 +1,7 @@
 # Quick Start
 
+This example creates a local database directory, writes three points, reads them back and computes an average.
+
 ```python
 from tsedge import TSEdge, Aggregate, Durability
 
@@ -19,8 +21,10 @@ with TSEdge.open("demo_db") as db:
     print(avg)
 ```
 
-This example creates a database directory named `demo_db`.
+When the code runs, TSEdge creates a directory named `demo_db`. That directory contains the database files: manifest, WAL and series segment files.
 
-The series is named `air.temperature`. Timestamps in the example are simple integers for demonstration. In real systems, timestamps can be Unix time in milliseconds, microseconds or nanoseconds, as long as the application uses one convention consistently.
+The series is named `air.temperature`. A TSEdge point always contains one timestamp and one floating-point value. If you have several physical measurements, store them as separate series such as `air.temperature`, `air.humidity` and `motor.current`.
 
-`read_range` returns matching points, and `aggregate` computes a streaming aggregate over the requested range.
+Timestamps in this example are simple integers. In real systems they are usually Unix timestamps in milliseconds, microseconds or nanoseconds. TSEdge does not enforce a unit, so choose one convention and use it consistently.
+
+`read_range` returns copied points from the requested range. `aggregate` computes the result while scanning data and does not need to allocate a large result array.

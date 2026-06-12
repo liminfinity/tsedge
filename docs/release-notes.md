@@ -2,7 +2,9 @@
 
 ## v0.1.1
 
-First public release.
+First public release of TSEdge as both a native C library and a Python package.
+
+This release focuses on the core embedded storage story: local append-oriented time-series files, crash recovery, range queries, aggregate queries and bundled Python wheels.
 
 ### Added
 
@@ -22,3 +24,4 @@ First public release.
 
 - Windows wheels are not included.
 - sdist is not published yet.
+- Published Python wheels include the native library, so `TSEDGE_LIBRARY` is not required for normal installation.

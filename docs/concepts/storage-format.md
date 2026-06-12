@@ -1,6 +1,6 @@
 # Storage Format
 
-TSEdge stores data in ordinary files under a database directory.
+TSEdge stores data in ordinary files under a database directory. The layout is intentionally simple so it can be inspected, tested and explained without a separate server process.
 
 ```text
 database_dir/
@@ -22,14 +22,16 @@ database_dir/
 
 ## Segments and blocks
 
-Each segment file is an append-only sequence of compressed blocks. Blocks contain enough metadata to skip data outside a query range without decoding the payload.
+Each segment file is an append-only sequence of compressed blocks. A block is the unit of compression and query skipping.
+
+Blocks contain enough metadata to answer a simple question quickly: can this block contain points in the requested time range? If not, the reader can skip the compressed payload and move to the next block.
 
 The payload contains two compressed streams:
 
 - timestamp stream
 - value stream
 
-Multi-byte integer fields are encoded explicitly in little-endian order.
+Multi-byte integer fields are encoded explicitly in little-endian order. This avoids silently depending on the host CPU byte order.
 
 ## Block header
 
@@ -47,6 +49,6 @@ Multi-byte integer fields are encoded explicitly in little-endian order.
 | max_value | f64 | maximum value |
 | sum_value | f64 | sum of values |
 
-The current implementation also stores a compression type and a reserved field in the binary block header. Readers validate these fields before decoding.
+The current implementation also stores a compression type and a reserved field in the binary block header. Readers validate these fields before decoding so malformed files fail cleanly.
 
 Block-level `min_value`, `max_value`, `sum_value` and `point_count` allow fully covered aggregate queries to avoid decompressing payloads.
